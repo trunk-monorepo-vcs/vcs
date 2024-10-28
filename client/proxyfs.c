@@ -15,15 +15,15 @@
 #	define AT_EMPTY_PATH 0x1000
 #endif
 
+/* CLIENT-SERVER COMMUNICATION */
 #include "client.h"
-
-#define BUFF_SIZE 100000;
 /* 
-	Static global var that contains descriptor of socket with server.
+	Static var that contains descriptor of socket with server.
 	Defines by function from client.h
 */
-extern int connection; 
-char buffer[BUFF_SIZE];
+static int connection;
+
+
 
 void log(char *msg_type, char *name) {
 	FILE *log_file = fopen("pxfs.log", "a+");
@@ -546,16 +546,10 @@ int main(int argc, char *argv[])
 		CREATE THEM !!!!
 	*/
 	//1. ESTABLISH CONNECTION WITH SERVER 
-	connection = connectToServer(buffer, BUFF_SIZE);
-	if (connection == -1) {
-		//perror("cannot connect to server");
+	connection = connectToServer(getenv("SERVER_IP"), atoi(getenv("SERVER_PORT")));
+	if (connection == -1) 
 		exit(EXIT_FAILURE);
-	}
-	//2. LOAD FILES FROM SERVER
-	if (getRepoStructure(buffer, BUFF_SIZE) == -1) {
-		// perror("troubles with getting repoStructure");
-		exit(EXIT_FAILURE);
-	}
+
 	//3. CREATE DIFF FILE
 	// пу пу пууууу
 

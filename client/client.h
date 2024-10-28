@@ -12,5 +12,7 @@
 
 #include <fuse.h>
 
-int connectToServer(char *buffer, int buffSize); //should we paste there buffSize???
-int getRepoStructure(char *buff, int buffSize); //args?? maybe it will contain `char *buff`
+/* Returns correct socketfd on success or -1 otherwise */
+int connectToServer(const char *ip, const int port);
+/* Returns not null char *data recieved from server or NULL on error */
+char *sendReqAndHandleResp(const int connection, const char *buffer, const int buffsize);
