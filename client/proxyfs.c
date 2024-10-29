@@ -10,6 +10,8 @@
 #include <dirent.h>
 
 #include <fuse.h>
+#include <sqlite3.h>
+#include <openssl/sha.h>
 
 #ifndef AT_EMPTY_PATH
 #	define AT_EMPTY_PATH 0x1000
@@ -173,22 +175,60 @@ static int pxfs_access(const char *name, int mask)
 	return 0;
 }
 
+static void calculate_file_hash(int fd, char *hash_output) {
+    SHA256_CTX sha256;
+    SHA256_Init(&sha256);
+    
+    unsigned char buffer[32768];
+    ssize_t bytes;
+    
+    // 保存当前文件位置
+    off_t current_pos = lseek(fd, 0, SEEK_CUR);
+    lseek(fd, 0, SEEK_SET);
+    
+    while ((bytes = read(fd, buffer, sizeof(buffer))) > 0) {
+        SHA256_Update(&sha256, buffer, bytes);
+    }
+    
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256_Final(hash, &sha256);
+    
+    // 转换为十六进制字符串
+    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        sprintf(hash_output + (i * 2), "%02x", hash[i]);
+    }
+    
+    // 恢复文件位置
+    lseek(fd, current_pos, SEEK_SET);
+}
+
 static int pxfs_read(const char *path,
                      char *buf,
                      size_t size,
                      off_t off,
                      struct fuse_file_info *fi)
 {
-	ssize_t out;
-
-	out = pread((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
-	if (out < 0)
-		return -errno;
-
-	// EDTIT
-	log_buf("READ", buf, size, path);
-
-	return (int)out;
+    ssize_t out;
+    
+    // 执行实际的读取操作
+    out = pread((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
+    if (out < 0)
+        return -errno;
+        
+    // 更新数据库中的读取时间
+    sqlite3 *db;
+    if (sqlite3_open("vcs.db", &db) == SQLITE_OK) {
+        char *sql = sqlite3_mprintf(
+            "UPDATE files SET last_read_at = CURRENT_TIMESTAMP "
+            "WHERE relative_path = %Q", path);
+            
+        sqlite3_exec(db, sql, NULL, NULL, NULL);
+        sqlite3_free(sql);
+        sqlite3_close(db);
+    }
+    
+    log_buf("READ", buf, size, path);
+    return (int)out;
 }
 
 static int pxfs_write(const char *path,
@@ -197,15 +237,39 @@ static int pxfs_write(const char *path,
                       off_t off,
                       struct fuse_file_info *fi)
 {
-	ssize_t out;
-
-	out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
-	if (out < 0)
-		return -errno;
-	// EDIT!!!
-	log_buf("WRITE", buf, size, path);
-
-	return (int)out;
+    ssize_t out;
+    
+    // 执行实际的写入操作
+    out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
+    if (out < 0)
+        return -errno;
+        
+    // 计算新的文件哈希
+    char hash[65] = {0};  // SHA-256 哈希值为 64 字符 + 结束符
+    calculate_file_hash((int)fi->fh, hash);
+    
+    // 获取文件大小
+    struct stat st;
+    if (fstat((int)fi->fh, &st) == 0) {
+        // 更新数据库
+        sqlite3 *db;
+        if (sqlite3_open("vcs.db", &db) == SQLITE_OK) {
+            char *sql = sqlite3_mprintf(
+                "UPDATE files SET "
+                "content_hash = %Q, "
+                "size_bytes = %lld, "
+                "last_write_at = CURRENT_TIMESTAMP "
+                "WHERE relative_path = %Q",
+                hash, (long long)st.st_size, path);
+                
+            sqlite3_exec(db, sql, NULL, NULL, NULL);
+            sqlite3_free(sql);
+            sqlite3_close(db);
+        }
+    }
+    
+    log_buf("WRITE", buf, size, path);
+    return (int)out;
 }
 
 static int pxfs_unlink(const char *name)
