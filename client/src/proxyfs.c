@@ -48,18 +48,40 @@ void log_buf(char *msg_type, char *name, int size, char *buf)
 
 static int pxfs_open(const char *name, struct fuse_file_info *fi)
 {
-	int fd;
+	char command[1024];
+	int server_fd;
 
-	fd = openat((int)(intptr_t)(fuse_get_context()->private_data),
-				&name[1],
-				fi->flags);
+	/*
+	Creating command to open the file.
+	*/
+	snprintf(command, sizeof(command), "OPEN %s %d", name, fi->flags);
 
-	if (fd < 0)
+	/*
+	Sending command to the server.
+	*/
+	if (send(connection, command, strlen(command), 0) == -1) {
+		perror("ERROR sending OPEN command to server");
+		return -EIO;
+	}
+
+	/*
+	Receiving file descriptor from the server.
+	*/
+	if (recv(connection, &server_fd, sizeof(server_fd), 0) <= 0) {
+		perror("ERROR receiving file descriptor from server");
+		return -EIO;
+	}
+
+	/*
+	Checking if the server gave a wrong number instead of the wanted file.
+	*/
+	if (server_fd < 0)
 		return -errno;
 
-	fi->fh = (uint64_t)fd;
+	fi->fh = server_fd;
 
 	log("OPEN", name);
+
 	return 0;
 }
 
