@@ -87,30 +87,56 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int pxfs_create(const char *name,
-					   mode_t mode,
-					   struct fuse_file_info *fi)
+static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 {
-	const struct fuse_context *ctx;
-	int dirfd, fd, err;
+	int dir_fd, server_fd, local_fd;
+	int response;
+	const struct fuse_context *ctx = fuse_get_context();
 
-	ctx = fuse_get_context();
-	dirfd = (int)(intptr_t)ctx->private_data;
-
-	fd = openat(dirfd, &name[1], fi->flags | O_CREAT | O_EXCL, mode);
-	if (fd < 0)
-		return -errno;
-
-	if (fchown(fd, ctx->uid, ctx->gid) < 0)
+	/*
+	Sending command to the server.
+	*/
+	snprintf(buffer, sizeof(buffer), "CREATE %s %o", name, mode);
+	if (send(connection, buffer, strlen(buffer), 0) == -1)
 	{
-		err = -errno;
-		close(fd);
-		return err;
+		perror("ERROR sending CREATE command to server");
+		return -EIO;
 	}
 
-	fi->fh = (uint64_t)fd;
+	/*
+	Receiving response from server.
+	*/
+	response = recv(connection, buffer, sizeof(buffer), 0);
+	if (response <=0) {
+		perror("ERROR no response from server");
+		return -EIO;
+	}
 
-	// EDIT!!
+	/*
+	Creating the file locally.
+	*/
+	dir_fd = (int)(intptr_t)ctx->private_data;
+
+	local_fd = openat(dir_fd, &name[1], fi->flags | O_CREAT | O_EXCL, mode);
+	if (local_fd < 0)
+	{
+		perror("Failed to create local file");
+		return -errno;
+	}
+
+	/*
+	Setting the file owner.
+	*/
+	if (fchown(local_fd, ctx->uid, ctx->gid) < 0) {
+		close(local_fd);
+		return -errno;
+	}
+
+	/*
+	Saving the file descriptor in FUSE.
+	*/
+	fi->fh = (uint64_t)local_fd;
+
 	log("CREATE", name);
 
 	return 0;
@@ -119,7 +145,7 @@ static int pxfs_create(const char *name,
 static int pxfs_close(const char *name, struct fuse_file_info *fi)
 {
 	char command[1024];
-	int server_fd;
+	int response;
 
 	/*
 	Creating command to close the file.
@@ -138,7 +164,7 @@ static int pxfs_close(const char *name, struct fuse_file_info *fi)
 	/*
 	Receiving response from the server.
 	*/
-	if (recv(connection, &server_fd, sizeof(server_fd), 0) <= 0)
+	if (recv(connection, &response, sizeof(response), 0) <= 0)
 	{
 		perror("ERROR receiving response from the server");
 		return -EIO;
@@ -147,7 +173,7 @@ static int pxfs_close(const char *name, struct fuse_file_info *fi)
 	/*
 	Checking if the server responded fail.
 	*/
-	if (server_fd < 0)
+	if (response < 0)
 		return -errno;
 
 	log("CLOSE", name);
