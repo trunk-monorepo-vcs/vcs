@@ -59,7 +59,8 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	/*
 	Sending command to the server.
 	*/
-	if (send(connection, command, strlen(command), 0) == -1) {
+	if (send(connection, command, strlen(command), 0) == -1)
+	{
 		perror("ERROR sending OPEN command to server");
 		return -EIO;
 	}
@@ -67,18 +68,19 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	/*
 	Receiving file descriptor from the server.
 	*/
-	if (recv(connection, &server_fd, sizeof(server_fd), 0) <= 0) {
+	if (recv(connection, &server_fd, sizeof(server_fd), 0) <= 0)
+	{
 		perror("ERROR receiving file descriptor from server");
 		return -EIO;
 	}
 
 	/*
-	Checking if the server gave a wrong number instead of the wanted file.
+	Checking if the server responded fail.
 	*/
 	if (server_fd < 0)
 		return -errno;
 
-	fi->fh = server_fd;
+	fi->fh = (uint64_t)server_fd;
 
 	log("OPEN", name);
 
@@ -116,10 +118,38 @@ static int pxfs_create(const char *name,
 
 static int pxfs_close(const char *name, struct fuse_file_info *fi)
 {
-	if (close((int)fi->fh))
+	char command[1024];
+	int server_fd;
+
+	/*
+	Creating command to close the file.
+	*/
+	snprintf(command, sizeof(command), "CLOSE %d", (int)fi->fh);
+
+	/*
+	Sending command to the server.
+	*/
+	if (send(connection, command, strlen(command), 0) == -1)
+	{
+		perror("ERROR sendig CLOSE command to the server");
+		return -EIO;
+	}
+
+	/*
+	Receiving response from the server.
+	*/
+	if (recv(connection, &server_fd, sizeof(server_fd), 0) <= 0)
+	{
+		perror("ERROR receiving response from the server");
+		return -EIO;
+	}
+
+	/*
+	Checking if the server responded fail.
+	*/
+	if (server_fd < 0)
 		return -errno;
 
-	// EDIT
 	log("CLOSE", name);
 
 	return 0;
