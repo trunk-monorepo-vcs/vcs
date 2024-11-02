@@ -469,6 +469,60 @@ static int pxfs_rename(const char *oldpath,
 
 	return 0;
 }
+void *getattrFromServer(const char *ip, const int port, const char *attrName) {
+    // connecting to the server
+    int connection = connectToServer(ip, port);
+    if (connection == -1) {
+        perror("Failed to connect to server");
+        return NULL;
+    }
+
+    // prepare the request to get an attribute
+    char request[256];
+    snprintf(request, sizeof(request), "GET %s", attrName);
+
+    // send the request and receive the response  
+    char *response = sendReqAndHandleResp(connection, request, strlen(request));
+    if (response == NULL) {
+        perror("Failed to get attribute from server");
+        close(connection);
+        return NULL;
+    }
+
+    close(connection);
+
+    // response from server
+    return response;
+}
+void readRemoteDir(const char *ip, const int port, const char *path) {
+    // сonnecting to the server
+    int connection = connectToServer(ip, port);
+    if (connection == -1) {
+        perror("Failed to connect to server");
+        return;
+    }
+
+    // prepare a request to read the directory
+    char request[256];
+    snprintf(request, sizeof(request), "LIST %s", path);
+
+    // send the request and receive the response
+    char *response = sendReqAndHandleResp(connection, request, strlen(request));
+    if (response == NULL) {
+        perror("Failed to read directory from server");
+        close(connection);
+        return;
+    }
+
+    // print the directory content
+    printf("%s\n", response);
+
+    // free the allocated memory
+    free(response);
+
+    close(connection);
+}
+
 
 struct fuse_operations pxfs_oper = {
 	.open		= pxfs_open,
