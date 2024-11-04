@@ -8,8 +8,8 @@ if not fuse.found()
 endif
 
 proxyfs = executable('vcs-client',
-                        'client.c',
-                        'proxyfs.c',
+                        'src/client.c',
+                        'src/proxyfs.c',
                         dependencies: fuse,
                         c_args: ['-D_GNU_SOURCE', '-DFUSE_USE_VERSION=@0@'.format(api_level)],
                         install: true,
