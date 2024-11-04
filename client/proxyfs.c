@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <limits.h>
 #include <dirent.h>
-
+#define FUSE_USE_VERSION 30
 #include <fuse.h>
 
 #ifndef AT_EMPTY_PATH
@@ -136,25 +136,45 @@ static int pxfs_getattr(const char *name,
 #else
                         struct stat *stbuf,
                         struct fuse_file_info *fi)
-
 #endif
 {
-	int ret;
-
+    int ret;
 #if FUSE_USE_VERSION >= 30
-	if (fi)
-		ret = fstat((int)fi->fh, stbuf);
-	else
+    if (fi) {
+        // local
+        ret = fstat((int)fi->fh, stbuf);
+        if (ret < 0)
+            return -errno;
+    } else {
+
+    	char *response;
+		const char *attrName;
+		// prepare the request to get an attribute
+    	char request[256];
+    	snprintf(request, sizeof(request), "GET %s", attrName);
+
+    	// send the request and receive the response  
+    	char *response = sendReqAndHandleResp(connection, request, strlen(request));
+    	if (response == NULL) {
+        perror("Failed to get attribute from server");
+        close(connection);
+        return NULL;
+    	}
+
+    	close(connection);
+
+        free(response);
+    }
+#else
+    ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
+                  &name[1],
+                  stbuf,
+                  AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW);
+    if (ret < 0)
+        return -errno;
 #endif
-		ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
-	                  &name[1],
-	                  stbuf,
-	                  AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW);
 
-	if (ret < 0)
-		return -errno;
-
-	return 0;
+    return 0;
 }
 
 static int pxfs_access(const char *name, int mask)
@@ -295,36 +315,86 @@ static int pxfs_readdir(const char *path,
                         enum fuse_readdir_flags flags)
 #endif
 {
-	struct stat stbuf;
-	struct dirent ent, *pent;
-	DIR *dirp = (DIR *)(uintptr_t)fi->fh;
-	int dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
+    struct stat stbuf;
+    struct dirent ent, *pent;
+    DIR *dirp;
+    int dirfd;
 
-	if (offset == 0)
-		rewinddir(dirp);
+#if FUSE_USE_VERSION >= 30
+    if (fi) {
+        // local readdir
+        dirp = (DIR *)(uintptr_t)fi->fh;
+        dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
 
-	do {
-		if (readdir_r(dirp, &ent, &pent) != 0)
-			return -errno;
+        if (offset == 0)
+            rewinddir(dirp);
 
-		if (!pent)
-			break;
+        do {
+            if (readdir_r(dirp, &ent, &pent) != 0)
+                return -errno;
 
-		if (fstatat(dirfd,
-		            pent->d_name,
-		            &stbuf,
-		            AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
-			return -errno;
+            if (!pent)
+                break;
+
+            if (fstatat(dirfd,
+                        pent->d_name,
+                        &stbuf,
+                        AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
+                return -errno;
+
+                return -ENOMEM;
+        } while (1);
+    } else {
+		// prepare a request to read the directory
+    	char request[256];
+    	snprintf(request, sizeof(request), "LIST %s", path);
+
+    	// send the request and receive the response
+    	char *response = sendReqAndHandleResp(connection, request, strlen(request));
+    	if (response == NULL) {
+        	perror("Failed to read directory from server");
+        	close(connection);
+        	return;
+    	}
+
+    	// print the directory content
+    	printf("%s\n", response);
+
+    	// free the allocated memory
+    	free(response);
+
+    	close(connection);
+    }
+#else
+    dirp = (DIR *)(uintptr_t)fi->fh;
+    dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
+
+    if (offset == 0)
+        rewinddir(dirp);
+
+    do {
+        if (readdir_r(dirp, &ent, &pent) != 0)
+            return -errno;
+
+        if (!pent)
+            break;
+
+        if (fstatat(dirfd,
+                    pent->d_name,
+                    &stbuf,
+                    AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
+            return -errno;
 
 #if FUSE_USE_VERSION < 30
-		if (filler(buf, pent->d_name, &stbuf, 0) == 1)
+        if (filler(buf, pent->d_name, &stbuf, 0) == 1)
 #else
-		if (filler(buf, pent->d_name, &stbuf, 0, flags) == 1)
+        if (filler(buf, pent->d_name, &stbuf, 0, flags) == 1)
 #endif
-			return -ENOMEM;
-	} while (1);
+            return -ENOMEM;
+    } while (1);
+#endif
 
-	return 0;
+    return 0;
 }
 
 static int pxfs_symlink(const char *to, const char *from)
@@ -469,59 +539,9 @@ static int pxfs_rename(const char *oldpath,
 
 	return 0;
 }
-void *getattrFromServer(const char *ip, const int port, const char *attrName) {
-    // connecting to the server
-    int connection = connectToServer(ip, port);
-    if (connection == -1) {
-        perror("Failed to connect to server");
-        return NULL;
-    }
 
-    // prepare the request to get an attribute
-    char request[256];
-    snprintf(request, sizeof(request), "GET %s", attrName);
 
-    // send the request and receive the response  
-    char *response = sendReqAndHandleResp(connection, request, strlen(request));
-    if (response == NULL) {
-        perror("Failed to get attribute from server");
-        close(connection);
-        return NULL;
-    }
 
-    close(connection);
-
-    // response from server
-    return response;
-}
-void readRemoteDir(const char *ip, const int port, const char *path) {
-    // сonnecting to the server
-    int connection = connectToServer(ip, port);
-    if (connection == -1) {
-        perror("Failed to connect to server");
-        return;
-    }
-
-    // prepare a request to read the directory
-    char request[256];
-    snprintf(request, sizeof(request), "LIST %s", path);
-
-    // send the request and receive the response
-    char *response = sendReqAndHandleResp(connection, request, strlen(request));
-    if (response == NULL) {
-        perror("Failed to read directory from server");
-        close(connection);
-        return;
-    }
-
-    // print the directory content
-    printf("%s\n", response);
-
-    // free the allocated memory
-    free(response);
-
-    close(connection);
-}
 
 
 struct fuse_operations pxfs_oper = {
@@ -541,7 +561,7 @@ struct fuse_operations pxfs_oper = {
 
 	.mkdir		= pxfs_mkdir,
 	.rmdir		= pxfs_rmdir,
-
+	
 	.opendir	= pxfs_opendir,
 	.releasedir	= pxfs_closedir,
 	.readdir	= pxfs_readdir,
