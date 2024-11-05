@@ -17,14 +17,11 @@
 
 /* CLIENT-SERVER COMMUNICATION */
 #include "client.h"
-
-#define BUFF_SIZE 100000;
 /*
-	Static global var that contains descriptor of socket with server.
+	Static var that contains descriptor of socket with server.
 	Defines by function from client.h
 */
-extern int connection;
-char buffer[BUFF_SIZE];
+static int connection;
 
 void log(char *msg_type, char *name)
 {
@@ -48,136 +45,91 @@ void log_buf(char *msg_type, char *name, int size, char *buf)
 
 static int pxfs_open(const char *name, struct fuse_file_info *fi)
 {
-	char command[1024];
-	int server_fd;
+	char request[1024];
 
-	/*
-	Creating command to open the file.
-	*/
-	snprintf(command, sizeof(command), "OPEN %s %d", name, fi->flags);
+	request[0] = 1;
+	size_t name_len = strlen(name);
+	request[1] = (uint8_t)name_len;
 
-	/*
-	Sending command to the server.
-	*/
-	if (send(connection, command, strlen(command), 0) == -1)
+	// Copying file name into request starting from the third byte
+	memcpy(request + 2, name, name_len);
+
+	char *response = sendReqAndHandleResp(connection, request, 2 + name_len);
+	if (response == NULL)
 	{
-		perror("ERROR sending OPEN command to server");
+		perror("Error handling OPEN response");
 		return -EIO;
 	}
 
-	/*
-	Receiving file descriptor from the server.
-	*/
-	if (recv(connection, &server_fd, sizeof(server_fd), 0) <= 0)
-	{
-		perror("ERROR receiving file descriptor from server");
-		return -EIO;
-	}
+	int server_fd = *(int *)response;
 
-	/*
-	Checking if the server responded fail.
-	*/
 	if (server_fd < 0)
+	{
 		return -errno;
+	}
 
 	fi->fh = (uint64_t)server_fd;
 
 	log("OPEN", name);
-
+	free(response);
 	return 0;
 }
 
 static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 {
-	int dir_fd, server_fd, local_fd;
-	int response;
+	char request[1024];
 	const struct fuse_context *ctx = fuse_get_context();
 
-	/*
-	Sending command to the server.
-	*/
-	snprintf(buffer, sizeof(buffer), "CREATE %s %o", name, mode);
-	if (send(connection, buffer, strlen(buffer), 0) == -1)
+	request[0] = 2;
+	size_t name_len = strlen(name);
+	request[1] = (uint8_t)name_len;
+	memcpy(request + 2, name, name_len);
+	*(mode_t *)(request + 2 + name_len) = mode;
+
+	char *response = sendReqAndHandleResp(connection, request, 2 + name_len + sizeof(mode));
+	if (response == NULL)
 	{
-		perror("ERROR sending CREATE command to server");
+		perror("Error handling CREATE response");
 		return -EIO;
 	}
 
-	/*
-	Receiving response from server.
-	*/
-	response = recv(connection, buffer, sizeof(buffer), 0);
-	if (response <=0) {
-		perror("ERROR no response from server");
-		return -EIO;
-	}
+	int server_fd = *(int *)response;
 
-	/*
-	Creating the file locally.
-	*/
-	dir_fd = (int)(intptr_t)ctx->private_data;
-
-	local_fd = openat(dir_fd, &name[1], fi->flags | O_CREAT | O_EXCL, mode);
-	if (local_fd < 0)
+	if (server_fd < 0)
 	{
-		perror("Failed to create local file");
 		return -errno;
 	}
 
-	/*
-	Setting the file owner.
-	*/
-	if (fchown(local_fd, ctx->uid, ctx->gid) < 0) {
-		close(local_fd);
-		return -errno;
-	}
-
-	/*
-	Saving the file descriptor in FUSE.
-	*/
-	fi->fh = (uint64_t)local_fd;
+	fi->fh = (uint64_t)server_fd;
 
 	log("CREATE", name);
-
+	free(response);
 	return 0;
 }
 
 static int pxfs_close(const char *name, struct fuse_file_info *fi)
 {
-	char command[1024];
-	int response;
+	char request[1024];
 
-	/*
-	Creating command to close the file.
-	*/
-	snprintf(command, sizeof(command), "CLOSE %d", (int)fi->fh);
+	request[0] = 3;
+	*(int *)(request + 1) = (int)fi->fh;
 
-	/*
-	Sending command to the server.
-	*/
-	if (send(connection, command, strlen(command), 0) == -1)
+	char *response = sendReqAndHandleResp(connection, request, sizeof(int) + 1);
+	if (response == NULL)
 	{
-		perror("ERROR sendig CLOSE command to the server");
+		perror("Error handling CLOSE response");
 		return -EIO;
 	}
 
-	/*
-	Receiving response from the server.
-	*/
-	if (recv(connection, &response, sizeof(response), 0) <= 0)
-	{
-		perror("ERROR receiving response from the server");
-		return -EIO;
-	}
+	int close_status = *(int *)response;
 
-	/*
-	Checking if the server responded fail.
-	*/
-	if (response < 0)
+	if (close_status < 0)
+	{
 		return -errno;
+	}
 
 	log("CLOSE", name);
-
+	free(response);
 	return 0;
 }
 
@@ -637,18 +589,10 @@ int main(int argc, char *argv[])
 		CREATE THEM !!!!
 	*/
 	// 1. ESTABLISH CONNECTION WITH SERVER
-	connection = connectToServer(buffer, BUFF_SIZE);
+	connection = connectToServer(getenv("SERVER_IP"), atoi(getenv("SERVER_PORT")));
 	if (connection == -1)
-	{
-		// perror("cannot connect to server");
 		exit(EXIT_FAILURE);
-	}
-	// 2. LOAD FILES FROM SERVER
-	if (getRepoStructure(buffer, BUFF_SIZE) == -1)
-	{
-		// perror("troubles with getting repoStructure");
-		exit(EXIT_FAILURE);
-	}
+
 	// 3. CREATE DIFF FILE
 	//  пу пу пууууу
 
