@@ -8,22 +8,22 @@
 #include <stdint.h>
 #include <limits.h>
 #include <dirent.h>
-#define FUSE_USE_VERSION 30
+
 #include <fuse.h>
 
 #ifndef AT_EMPTY_PATH
 #	define AT_EMPTY_PATH 0x1000
 #endif
 
+/* CLIENT-SERVER COMMUNICATION */
 #include "client.h"
-
-#define BUFF_SIZE 100000;
 /* 
-	Static global var that contains descriptor of socket with server.
+	Static var that contains descriptor of socket with server.
 	Defines by function from client.h
 */
-extern int connection; 
-char buffer[BUFF_SIZE];
+static int connection;
+#define FUSE_USE_VERSION 30
+
 
 void log(char *msg_type, char *name) {
 	FILE *log_file = fopen("pxfs.log", "a+");
@@ -148,22 +148,37 @@ static int pxfs_getattr(const char *name,
     } else {
 
     	char *response;
-		const char *attrName;
+		const char *attrName = name;
 		// prepare the request to get an attribute
-    	char request[256];
+    	char request[1024];
+		request[0] = 3;
+		int path_length = strlen(attrName);
+		memcpy(&request[1], &path_length, 4);
+		memcpy(&request[5], attrName, path_length);
     	snprintf(request, sizeof(request), "GET %s", attrName);
 
     	// send the request and receive the response  
-    	char *response = sendReqAndHandleResp(connection, request, strlen(request));
+    	char *response = sendReqAndHandleResp(connection, request, path_length + 5);
     	if (response == NULL) {
-        perror("Failed to get attribute from server");
-        close(connection);
-        return NULL;
+        	perror("Error of function sendReqAndHandleResp");
+        	return -EIO;
     	}
 
-    	close(connection);
+		// process the response and fill the stat structure
+        int file_exists = response[0];
+        if (file_exists == 0) {
+            // file exists, parse the stat structure
+            uint32_t struct_size = ntohl(*(uint32_t *)&response[1]);
+            memcpy(stbuf, &response[5], struct_size);
+        } else if (file_exists == -1){
+            // file does not exist
+			uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
+			memcpy(stbuf, &response[5], error_length);
+            return -ENOENT;
+        }
 
         free(response);
+		return 0;
     }
 #else
     ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
@@ -219,7 +234,7 @@ static int pxfs_write(const char *path,
 {
 	ssize_t out;
 
-	out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
+	// out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
 	if (out < 0)
 		return -errno;
 	// EDIT!!!
@@ -303,7 +318,6 @@ static int pxfs_closedir(const char *name, struct fuse_file_info *fi)
 
 	return 0;
 }
-
 static int pxfs_readdir(const char *path,
                         void *buf,
                         fuse_fill_dir_t filler,
@@ -345,25 +359,48 @@ static int pxfs_readdir(const char *path,
                 return -ENOMEM;
         } while (1);
     } else {
-		// prepare a request to read the directory
-    	char request[256];
-    	snprintf(request, sizeof(request), "LIST %s", path);
+        // prepare a request to read the directory
+        char request[1024];
+        request[0] = 2;
+        int path_length = strlen(path);
+        memcpy(request + 1, &path_length, 4);
+        memcpy(request + 5, path, path_length);
 
-    	// send the request and receive the response
-    	char *response = sendReqAndHandleResp(connection, request, strlen(request));
-    	if (response == NULL) {
-        	perror("Failed to read directory from server");
-        	close(connection);
-        	return;
-    	}
+        // send the request and receive the response
+        char *response = sendReqAndHandleResp(connection, request, path_length + 5);
+        if (response == NULL) {
+            perror("Error of function sendReqAndHandleResp");
+            return -EIO;
+        }
 
-    	// print the directory content
-    	printf("%s\n", response);
+        // process the response and fill the stat structure
+        int file_exists = response[0];
+        if (file_exists == 0) {
+            // file exists
+            uint32_t names_count = ntohl(*(uint32_t *)&response[1]);
+            int offset = 5;
+			// listing files
+            for (uint32_t i = 0; i < names_count; i++) {
+                uint8_t name_length = response[offset];
+                char name[name_length + 1];
+                memcpy(name, &response[offset + 1], name_length);
+                name[name_length] = '\0';
+                printf("Name: %s\n", name);
+                offset += 1 + name_length;
+            }
+        } else {
+            // file does not exist
+            uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
+            char error_message[error_length + 1];
+            memcpy(error_message, &response[5], error_length);
+            error_message[error_length] = '\0';
+            printf("Error: %s\n", error_message);
+        }
 
-    	// free the allocated memory
-    	free(response);
+        // free the allocated memory
+        free(response);
 
-    	close(connection);
+        return 0;
     }
 #else
     dirp = (DIR *)(uintptr_t)fi->fh;
@@ -540,10 +577,6 @@ static int pxfs_rename(const char *oldpath,
 	return 0;
 }
 
-
-
-
-
 struct fuse_operations pxfs_oper = {
 	.open		= pxfs_open,
 	.create		= pxfs_create,
@@ -561,7 +594,7 @@ struct fuse_operations pxfs_oper = {
 
 	.mkdir		= pxfs_mkdir,
 	.rmdir		= pxfs_rmdir,
-	
+
 	.opendir	= pxfs_opendir,
 	.releasedir	= pxfs_closedir,
 	.readdir	= pxfs_readdir,
@@ -620,16 +653,10 @@ int main(int argc, char *argv[])
 		CREATE THEM !!!!
 	*/
 	//1. ESTABLISH CONNECTION WITH SERVER 
-	connection = connectToServer(buffer, BUFF_SIZE);
-	if (connection == -1) {
-		//perror("cannot connect to server");
+	connection = connectToServer(getenv("SERVER_IP"), atoi(getenv("SERVER_PORT")));
+	if (connection == -1) 
 		exit(EXIT_FAILURE);
-	}
-	//2. LOAD FILES FROM SERVER
-	if (getRepoStructure(buffer, BUFF_SIZE) == -1) {
-		// perror("troubles with getting repoStructure");
-		exit(EXIT_FAILURE);
-	}
+
 	//3. CREATE DIFF FILE
 	// пу пу пууууу
 
