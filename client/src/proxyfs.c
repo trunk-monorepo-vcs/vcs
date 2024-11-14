@@ -59,10 +59,10 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	}
 
 	int8_t status = response[0];
-	if (status < 0)
+	if (status == -1)
 	{
 		perror("Server error during OPEN");
-		return -EIO;
+		return -EACCES;
 	}
 
 	log("OPEN", name);
@@ -84,13 +84,14 @@ static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 		perror("Error in sendReqAndHandleResp during CREATE request");
 		return -EIO;
 	}
+
+	int8_t status = response[0];
+    if (status == -1) {
+		perror("Server error during CREATE");
+        return -EACCES;
+    }
+
 	int server_fd = *(int *)response;
-
-	if (server_fd < 0)
-	{
-		return -errno;
-	}
-
 	fi->fh = (uint64_t)server_fd;
 
 	log("CREATE", name);
@@ -110,6 +111,12 @@ static int pxfs_close(const char *name, struct fuse_file_info *fi)
 		perror("Error in sendReqAndHandleResp during CLOSE request");
 		return -EIO;
 	}
+
+	int8_t status = response[0];
+    if (status == -1) {
+		perror("Server error during CLOSE");
+        return -EACCES;
+    }
 
 	log("CLOSE", name);
 	return 0;
