@@ -45,54 +45,45 @@ void log_buf(char *msg_type, char *name, int size, char *buf)
 
 static int pxfs_open(const char *name, struct fuse_file_info *fi)
 {
-	char request[1024];
-
-	request[0] = 1;
 	size_t name_len = strlen(name);
+	char request[1024];
+	request[0] = 1;
 	request[1] = (uint8_t)name_len;
-
-	// Copying file name into request starting from the third byte
 	memcpy(request + 2, name, name_len);
 
 	char *response = sendReqAndHandleResp(connection, request, 2 + name_len);
 	if (response == NULL)
 	{
-		perror("Error handling OPEN response");
+		perror("Error in sendReqAndHandleResp during OPEN request");
 		return -EIO;
 	}
 
-	int server_fd = *(int *)response;
-
-	if (server_fd < 0)
+	int8_t status = response[0];
+	if (status < 0)
 	{
-		return -errno;
+		perror("Server error during OPEN");
+		return -EIO;
 	}
 
-	fi->fh = (uint64_t)server_fd;
-
 	log("OPEN", name);
-	free(response);
 	return 0;
 }
 
 static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 {
-	char request[1024];
-	const struct fuse_context *ctx = fuse_get_context();
-
-	request[0] = 2;
 	size_t name_len = strlen(name);
+	char request[1024];
+	request[0] = 2;
 	request[1] = (uint8_t)name_len;
 	memcpy(request + 2, name, name_len);
-	*(mode_t *)(request + 2 + name_len) = mode;
+	*(mode_t *)(request + name_len + 2) = mode;
 
-	char *response = sendReqAndHandleResp(connection, request, 2 + name_len + sizeof(mode));
+	char *response = sendReqAndHandleResp(connection, request, name_len + sizeof(mode) + 2);
 	if (response == NULL)
 	{
-		perror("Error handling CREATE response");
+		perror("Error in sendReqAndHandleResp during CREATE request");
 		return -EIO;
 	}
-
 	int server_fd = *(int *)response;
 
 	if (server_fd < 0)
@@ -103,7 +94,6 @@ static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 	fi->fh = (uint64_t)server_fd;
 
 	log("CREATE", name);
-	free(response);
 	return 0;
 }
 
@@ -117,19 +107,11 @@ static int pxfs_close(const char *name, struct fuse_file_info *fi)
 	char *response = sendReqAndHandleResp(connection, request, sizeof(int) + 1);
 	if (response == NULL)
 	{
-		perror("Error handling CLOSE response");
+		perror("Error in sendReqAndHandleResp during CLOSE request");
 		return -EIO;
 	}
 
-	int close_status = *(int *)response;
-
-	if (close_status < 0)
-	{
-		return -errno;
-	}
-
 	log("CLOSE", name);
-	free(response);
 	return 0;
 }
 
