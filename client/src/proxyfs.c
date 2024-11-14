@@ -86,10 +86,11 @@ static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 	}
 
 	int8_t status = response[0];
-    if (status == -1) {
+	if (status == -1)
+	{
 		perror("Server error during CREATE");
-        return -EACCES;
-    }
+		return -EACCES;
+	}
 
 	int server_fd = *(int *)response;
 	fi->fh = (uint64_t)server_fd;
@@ -113,10 +114,11 @@ static int pxfs_close(const char *name, struct fuse_file_info *fi)
 	}
 
 	int8_t status = response[0];
-    if (status == -1) {
+	if (status == -1)
+	{
 		perror("Server error during CLOSE");
-        return -EACCES;
-    }
+		return -EACCES;
+	}
 
 	log("CLOSE", name);
 	return 0;
