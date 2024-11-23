@@ -92,9 +92,6 @@ static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 		return -EACCES;
 	}
 
-	int server_fd = *(int *)response;
-	fi->fh = (uint64_t)server_fd;
-
 	log("CREATE", name);
 	return 0;
 }
