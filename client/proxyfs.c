@@ -148,13 +148,13 @@ static int pxfs_getattr(const char *name,
     } else {
 
     	char *response;
-		const char *attrName = name;
-		// prepare the request to get an attribute
-    	char request[1024];
-		request[0] = 3;
-		int path_length = strlen(attrName);
-		memcpy(&request[1], &path_length, 4);
-		memcpy(&request[5], attrName, path_length);
+	const char *attrName = name;
+	// prepare the request to get an attribute
+    	char request[1024];		
+	request[0] = 3;
+	int path_length = strlen(attrName);
+	memcpy(&request[1], &path_length, 4);
+	memcpy(&request[5], attrName, path_length);
     	snprintf(request, sizeof(request), "GET %s", attrName);
 
     	// send the request and receive the response  
@@ -164,7 +164,7 @@ static int pxfs_getattr(const char *name,
         	return -EIO;
     	}
 
-		// process the response and fill the stat structure
+	// process the response and fill the stat structure
         int file_exists = response[0];
         if (file_exists == 0) {
             // file exists, parse the stat structure
@@ -172,8 +172,8 @@ static int pxfs_getattr(const char *name,
             memcpy(stbuf, &response[5], struct_size);
         } else if (file_exists == -1){
             // file does not exist
-			uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
-			memcpy(stbuf, &response[5], error_length);
+	    uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
+	    memcpy(stbuf, &response[5], error_length);
             return -ENOENT;
         }
 
