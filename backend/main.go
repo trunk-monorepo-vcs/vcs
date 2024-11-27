@@ -2,7 +2,6 @@ package main
 
 import (
     "backend"
-    "backend/server"
 	"fmt"
 	"os"
 )
