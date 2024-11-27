@@ -179,16 +179,24 @@ static int pxfs_read(const char *path,
                      off_t off,
                      struct fuse_file_info *fi)
 {
-	ssize_t out;
+    // Send read request to server
+    // Format: READ <path> <size> <offset>
+    char request[PATH_MAX + 100];
+    snprintf(request, sizeof(request), "READ %s %zu %ld", path, size, off);
+    if (send(connection, request, strlen(request), 0) < 0) {
+        return -EIO;
+    }
 
-	out = pread((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
-	if (out < 0)
-		return -errno;
+    // Receive data from server
+    ssize_t bytes_read = recv(connection, buf, size, 0);
+    if (bytes_read < 0) {
+        return -EIO;
+    }
 
-	// EDTIT
-	log_buf("READ", buf, size, path);
+    // Log the read operation
+    log_buf("READ", buf, bytes_read, path);
 
-	return (int)out;
+    return bytes_read;
 }
 
 static int pxfs_write(const char *path,
@@ -197,15 +205,30 @@ static int pxfs_write(const char *path,
                       off_t off,
                       struct fuse_file_info *fi)
 {
-	ssize_t out;
+    // Send write request to server
+    // Format: WRITE <path> <size> <offset>
+    char request[PATH_MAX + 100];
+    snprintf(request, sizeof(request), "WRITE %s %zu %ld", path, size, off);
+    if (send(connection, request, strlen(request), 0) < 0) {
+        return -EIO;
+    }
 
-	// out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
-	if (out < 0)
-		return -errno;
-	// EDIT!!!
-	log_buf("WRITE", buf, size, path);
+    // Send the actual data
+    ssize_t bytes_written = send(connection, buf, size, 0);
+    if (bytes_written < 0) {
+        return -EIO;
+    }
 
-	return (int)out;
+    // Wait for server acknowledgment
+    char ack[10];
+    if (recv(connection, ack, sizeof(ack), 0) < 0) {
+        return -EIO;
+    }
+
+    // Log the write operation
+    log_buf("WRITE", buf, bytes_written, path);
+
+    return bytes_written;
 }
 
 static int pxfs_unlink(const char *name)
