@@ -1,7 +1,7 @@
 package main
 
 import (
-    "backend"
+    "backend/server"
 	"fmt"
 	"os"
 )
@@ -14,7 +14,7 @@ func main() {
     }
 
     // Init backend application
-    status, err := backend.initServer(port)
+    status, err := server.InitServer(port)
     if status != 0 {
         fmt.Errorf("Error %s", err)
     }

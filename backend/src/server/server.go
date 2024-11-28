@@ -2,13 +2,10 @@ package server
 
 import (
 	"encoding/binary"
-	"fmt"
 	"net"
-	//"utils"
-	"encoding/binary"
 	"os"
 	"slices"
-	"utils"
+	"backend/utils"
 )
 
 type connectionFinishingStatus struct {
@@ -26,7 +23,7 @@ func (e *connectionFinishingStatus) Error() string {
 
 // }
 
-func initServer(port string) (int, error) {
+func InitServer(port string) (int, error) {
 	// Listen for incoming connection on port `port`
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
@@ -189,9 +186,9 @@ func getPathFromRequest(conn net.Conn, connFinishingStatus *connectionFinishingS
 		handlersErrorHandling(connFinishingStatus, err.Error(), conn)
 		return ""
 	}
-	pathLength := utils.bytes4ToInt32(pathLengthBytes)
+	pathLength := utils.Bytes4ToInt32(pathLengthBytes)
 	if pathLength < 0 {
-		handlersErrorHandling(connFinishingStatus, "Negative path length: pathLength="+pathLength, conn)
+		handlersErrorHandling(connFinishingStatus, "Negative path length: pathLength=" + string(pathLength), conn)
 		return ""
 	}
 	pathAsBytes := make([]byte, pathLength)
