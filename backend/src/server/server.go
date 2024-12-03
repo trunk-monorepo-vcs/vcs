@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"backend/utils"
+	"log"
 )
 
 type connectionFinishingStatus struct {
@@ -29,6 +30,7 @@ func InitServer(port string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	log.Output(1, "Server listening on port: " + port)
 
 	// Accept only one connection
 	// For demo with one user
