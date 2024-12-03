@@ -155,7 +155,7 @@ static int pxfs_getattr(const char *name,
 	int path_length = strlen(attrName);
 	memcpy(&request[1], &path_length, 4);
 	memcpy(&request[5], attrName, path_length);
-    	snprintf(request, sizeof(request), "GET %s", attrName);
+    	
 
     	// send the request and receive the response  
     	char *response = sendReqAndHandleResp(connection, request, path_length + 5);
