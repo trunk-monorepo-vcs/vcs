@@ -146,40 +146,46 @@ static int pxfs_getattr(const char *name,
         if (ret < 0)
             return -errno;
     } else {
-
+	    
     	char *response;
-	const char *attrName = name;
-	// prepare the request to get an attribute
-    	char request[1024];		
-	request[0] = 3;
-	int path_length = strlen(attrName);
-	memcpy(&request[1], &path_length, 4);
-	memcpy(&request[5], attrName, path_length);
-    	
+    
+    	// Prepare the request to get an attribute
+    	char request[1024];
+    	//type of request
+    	request[0] = 3;
+    	//path length
+    	int path_length = strlen(name);
+    	uint32_t net_path_length = htonl(path_length);
+    	memcpy(&request[1], &net_path_length, 4);
+    	//path
+    	memcpy(&request[5], name, path_length);
 
-    	// send the request and receive the response  
-    	char *response = sendReqAndHandleResp(connection, request, path_length + 5);
+    	// Send the request and receive the response
+    	response = sendReqAndHandleResp(connection, request, path_length + 5);
     	if (response == NULL) {
         	perror("Error of function sendReqAndHandleResp");
         	return -EIO;
     	}
 
-	// process the response and fill the stat structure
-        int file_exists = response[0];
-        if (file_exists == 0) {
-            // file exists, parse the stat structure
-            uint32_t struct_size = ntohl(*(uint32_t *)&response[1]);
-            memcpy(stbuf, &response[5], struct_size);
-        } else if (file_exists == -1){
-            // file does not exist
-	    uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
-	    memcpy(stbuf, &response[5], error_length);
-            return -ENOENT;
-        }
+    	// Process the response and fill the stat structure
+    	int file_exists = response[0];
+    	if (file_exists == 0) {
+        	// File exists, parse the stat structure
+        	uint32_t struct_size = ntohl(*(uint32_t *)&response[1]);
+        	// Fill the stat structure with mode, nlink, and size
+		stbuf->st_nlink = 1;
+        	stbuf->st_mode = ntohl(*(uint32_t *)&response[5]);
+        	stbuf->st_size = ntohl(*(uint32_t *)&response[9]);
+    	} else if (file_exists == 1) {
+            	// file does not exist
+	    	uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
+	    	memcpy(stbuf, &response[5], error_length);
+        	free(response);
+        	return -ENOENT;
+    	}
 
-        free(response);
-		return 0;
-    }
+    	free(response);
+    	return 0;
 #else
     ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
                   &name[1],
@@ -379,7 +385,7 @@ static int pxfs_readdir(const char *path,
             // file exists
             uint32_t names_count = ntohl(*(uint32_t *)&response[1]);
             int offset = 5;
-			// listing files
+	    // listing files
             for (uint32_t i = 0; i < names_count; i++) {
                 uint8_t name_length = response[offset];
                 char name[name_length + 1];
@@ -388,7 +394,7 @@ static int pxfs_readdir(const char *path,
                 printf("Name: %s\n", name);
                 offset += 1 + name_length;
             }
-        } else {
+        } else if (file_exists == 1){
             // file does not exist
             uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
             char error_message[error_length + 1];
