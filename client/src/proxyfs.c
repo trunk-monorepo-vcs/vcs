@@ -60,7 +60,7 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	}
 
 	int8_t status = response[0];
-	if (status == -1)
+	if (status == 1)
 	{
 		perror("Server error during OPEN");
 		free(response);
