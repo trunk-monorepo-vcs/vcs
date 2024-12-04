@@ -1,14 +1,14 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <limits.h>
 #include <dirent.h>
-
+#include <string.h>
+#include <fcntl.h>
 #include <fuse.h>
 
 #ifndef AT_EMPTY_PATH
@@ -17,6 +17,7 @@
 
 /* CLIENT-SERVER COMMUNICATION */
 #include "client.h"
+
 /*
 	Static var that contains descriptor of socket with server.
 	Defines by function from client.h
@@ -45,9 +46,9 @@ void log_buf(char *msg_type, char *name, int size, char *buf)
 
 static int pxfs_open(const char *name, struct fuse_file_info *fi)
 {
-	size_t name_len = strlen(name);
 	char request[1024];
 	request[0] = 1;
+	size_t name_len = strlen(name);
 	request[1] = (uint8_t)name_len;
 	memcpy(request + 2, name, name_len);
 
@@ -62,62 +63,47 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	if (status == -1)
 	{
 		perror("Server error during OPEN");
+		free(response);
 		return -EACCES;
 	}
 
-	log("OPEN", name);
+	free(response);
+
+	int fd = open(name, fi->flags);
+	if (fd == -1)
+	{
+		perror("Error opening file");
+		return -errno;
+	}
+
+	fi->fh = fd;
+	log_message("OPEN");
 	return 0;
 }
 
 static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 {
-	size_t name_len = strlen(name);
-	char request[1024];
-	request[0] = 2;
-	request[1] = (uint8_t)name_len;
-	memcpy(request + 2, name, name_len);
-	*(mode_t *)(request + name_len + 2) = mode;
-
-	char *response = sendReqAndHandleResp(connection, request, name_len + sizeof(mode) + 2);
-	if (response == NULL)
+	int fd = creat(name, mode);
+	if (fd == -1)
 	{
-		perror("Error in sendReqAndHandleResp during CREATE request");
-		return -EIO;
+		perror("Error creating file");
+		return -errno;
 	}
 
-	int8_t status = response[0];
-	if (status == -1)
-	{
-		perror("Server error during CREATE");
-		return -EACCES;
-	}
-
-	log("CREATE", name);
+	fi->fh = fd;
+	log_message("CREATE");
 	return 0;
 }
 
 static int pxfs_close(const char *name, struct fuse_file_info *fi)
 {
-	char request[1024];
-
-	request[0] = 3;
-	*(int *)(request + 1) = (int)fi->fh;
-
-	char *response = sendReqAndHandleResp(connection, request, sizeof(int) + 1);
-	if (response == NULL)
+	if (close(fi->fh) == -1)
 	{
-		perror("Error in sendReqAndHandleResp during CLOSE request");
-		return -EIO;
+		perror("Error closing file");
+		return -errno;
 	}
 
-	int8_t status = response[0];
-	if (status == -1)
-	{
-		perror("Server error during CLOSE");
-		return -EACCES;
-	}
-
-	log("CLOSE", name);
+	log_message("CLOSE");
 	return 0;
 }
 
@@ -250,20 +236,34 @@ static int pxfs_mkdir(const char *name, mode_t mode)
 	const struct fuse_context *ctx;
 	int dirfd, err;
 
+	// Проверка аргументов
+	if (!name || name[0] != '/' || name[1] == '\0')
+	{
+		return -EINVAL; // Неверный аргумент
+	}
+
+	// Получение контекста FUSE
 	ctx = fuse_get_context();
+	if (!ctx)
+	{
+		return -EIO; // Ошибка ввода-вывода
+	}
+
 	dirfd = (int)(intptr_t)ctx->private_data;
 
+	// Создание каталога
 	if (mkdirat(dirfd, &name[1], mode) < 0)
+	{
+		perror("mkdirat failed");
 		return -errno;
+	}
 
-	if (fchownat(dirfd,
-				 &name[1],
-				 ctx->uid,
-				 ctx->gid,
-				 AT_SYMLINK_NOFOLLOW) < 0)
+	// Установка владельца
+	if (fchownat(dirfd, &name[1], ctx->uid, ctx->gid, AT_SYMLINK_NOFOLLOW) < 0)
 	{
 		err = -errno;
-		unlinkat(dirfd, &name[1], AT_REMOVEDIR);
+		if (unlinkat(dirfd, &name[1], AT_REMOVEDIR) < 0)
+			perror("Failed to clean up after fchownat failure");
 		return err;
 	}
 
@@ -542,14 +542,16 @@ int main(int argc, char *argv[])
 	char *fuse_argv[4];
 	int dirfd, ret;
 
-	if (argc != 2)
+	if (argc < 2)
 	{
 		fprintf(stderr, "Usage: %s TARGET\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
-	if (mkdir(DEFAULT_PATH_TO_VCS_DIR, 0777) != 0)
+	if (pxfs_mkdir(DEFAULT_PATH_TO_VCS_DIR, 0777) != 0)
+	{
 		exit(EXIT_FAILURE);
+	}
 
 	dirfd = open(".", O_DIRECTORY);
 	if (dirfd < 0)
