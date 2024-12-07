@@ -7,7 +7,6 @@
 #include <stdint.h>
 #include <limits.h>
 #include <dirent.h>
-#include <string.h>
 #include <fcntl.h>
 #include <fuse.h>
 
@@ -46,13 +45,23 @@ void log_buf(char *msg_type, char *name, int size, char *buf)
 
 static int pxfs_open(const char *name, struct fuse_file_info *fi)
 {
+	int fd;
+
+	fd = openat((int)(intptr_t)(fuse_get_context()->private_data), &name[1], fi->flags);
+	if (fd >= 0)
+	{
+		fi->fh = (uint64_t)fd;
+		log("OPEN", name);
+		return 0;
+	}
+
 	char request[1024];
 	request[0] = 1;
 	size_t name_len = strlen(name);
 	request[1] = (uint8_t)name_len;
 	memcpy(request + 2, name, name_len);
 
-	char *response = sendReqAndHandleResp(connection, request, 2 + name_len);
+	char *response = sendReqAndHandleResp(connection, request, name_len + 2);
 	if (response == NULL)
 	{
 		perror("Error in sendReqAndHandleResp during OPEN request");
@@ -62,36 +71,47 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	int8_t status = response[0];
 	if (status == 1)
 	{
-		perror("Server error during OPEN");
+		perror("Server error: Permission denied");
 		free(response);
 		return -EACCES;
 	}
 
 	free(response);
 
-	int fd = open(name, fi->flags);
-	if (fd == -1)
+	fd = openat((int)(intptr_t)(fuse_get_context()->private_data), &name[1], fi->flags);
+	if (fd < 0)
 	{
-		perror("Error opening file");
+		perror("Error opening file after server sync");
 		return -errno;
 	}
 
-	fi->fh = fd;
-	log_message("OPEN");
+	fi->fh = (uint64_t)fd;
+	log_message("OPEN", name);
 	return 0;
 }
 
 static int pxfs_create(const char *name, mode_t mode, struct fuse_file_info *fi)
 {
-	int fd = creat(name, mode);
-	if (fd == -1)
-	{
-		perror("Error creating file");
+	const struct fuse_context *ctx;
+	int dirfd, fd, err;
+
+	ctx = fuse_get_context();
+	dirfd = (int)(intptr_t)ctx->private_data;
+
+	fd = openat(dirfd, &name[1], fi->flags | O_CREAT | O_EXCL, mode);
+	if (fd < 0)
 		return -errno;
+
+	if (fchown(fd, ctx->uid, ctx->gid) < 0)
+	{
+		err = -errno;
+		close(fd);
+		return err;
 	}
 
-	fi->fh = fd;
-	log_message("CREATE");
+	fi->fh = (uint64_t)fd;
+
+	log("CREATE", name);
 	return 0;
 }
 
@@ -103,7 +123,7 @@ static int pxfs_close(const char *name, struct fuse_file_info *fi)
 		return -errno;
 	}
 
-	log_message("CLOSE");
+	log("CLOSE", name);
 	return 0;
 }
 
