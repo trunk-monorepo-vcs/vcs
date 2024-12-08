@@ -8,7 +8,8 @@
 #include <stdint.h>
 #include <limits.h>
 #include <dirent.h>
-
+#include <stdlib.h>
+#include <stddef.h>
 #include <fuse.h>
 
 #ifndef AT_EMPTY_PATH
@@ -21,6 +22,7 @@
 	Static var that contains descriptor of socket with server.
 	Defines by function from client.h
 */
+#include "diff.h"
 static int connection;
 
 
@@ -57,8 +59,8 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 }
 
 static int pxfs_create(const char *name,
-                       mode_t mode,
-                       struct fuse_file_info *fi)
+					   mode_t mode,
+					   struct fuse_file_info *fi)
 {
 	const struct fuse_context *ctx;
 	int dirfd, fd, err;
@@ -78,6 +80,12 @@ static int pxfs_create(const char *name,
 
 	fi->fh = (uint64_t)fd;
 
+	char initial_content[MAX_FILE_CONTENT_LENGTH] = {0};
+	PseudoFile* file = create_pseudo_file(name, initial_content);
+	if (file == NULL) {
+		close(fd);
+		return -ENOMEM;
+	}
 	// EDIT!!
 	log("CREATE", name);
 
@@ -238,19 +246,24 @@ static int pxfs_read(const char *path,
 
 static int pxfs_write(const char *path,
                       const char *buf,
-                      size_t size,
-                      off_t off,
-                      struct fuse_file_info *fi)
+					  size_t size,
+					  off_t off,
+					  struct fuse_file_info *fi)
 {
-	ssize_t out;
+  		ssize_t out;
+		//out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
+		if (out < 0)
+			return -errno;
 
-	// out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
-	if (out < 0)
-		return -errno;
-	// EDIT!!!
-	log_buf("WRITE", buf, size, path);
+		// Обновление псевдофайла
+		PseudoFile* file = find_file(path);
+		if (file != NULL) {
+			update_pseudo_file(file, buf);
+		}
+		// EDIT!!!
+		log_buf("WRITE", buf, size, path);
 
-	return (int)out;
+		return (int)out;
 }
 
 static int pxfs_unlink(const char *name)
