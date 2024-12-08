@@ -139,7 +139,23 @@ int main() {
     }
 
     // Allow some time for the mock server to start
-    sleep(1);
+    for (int i = 0; i < 5; i++) {
+        sleep(1);
+        connection = socket(AF_INET, SOCK_STREAM, 0);
+        if (connection < 0) continue;
+
+        struct sockaddr_in server_addr;
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(PORT);
+        server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+        if (connect(connection, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0) {
+            printf("Connected to server\n");
+            break;
+        }
+        close(connection);
+    }
+
 
     // Test pxfs_read
     char read_buffer[1024];
