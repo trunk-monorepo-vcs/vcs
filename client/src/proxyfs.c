@@ -86,7 +86,7 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	}
 
 	fi->fh = (uint64_t)fd;
-	log_message("OPEN", name);
+	log("OPEN", name);
 	return 0;
 }
 
