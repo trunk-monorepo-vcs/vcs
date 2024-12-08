@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <fuse.h>
+#include <string.h>
 
 #ifndef AT_EMPTY_PATH
 #define AT_EMPTY_PATH 0x1000
@@ -56,10 +57,11 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	}
 
 	char request[1024];
-	request[0] = 1;
+	request[0] = 1; // OPEN request
 	size_t name_len = strlen(name);
-	request[1] = (uint8_t)name_len;
-	memcpy(request + 2, name, name_len);
+	uint32_t netw_name_len = htonl((uint32_t)name_len);
+	memcpy(request + 1, &netw_name_len, 4);
+	memcpy(request + 5, name, name_len);
 
 	char *response = sendReqAndHandleResp(connection, request, name_len + 2);
 	if (response == NULL)
@@ -68,7 +70,7 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 		return -EIO;
 	}
 
-	int8_t status = response[0];
+	int8_t status = response[8];
 	if (status == 1)
 	{
 		perror("Server error: Permission denied");
@@ -570,13 +572,13 @@ int main(int argc, char *argv[])
 
 	if (pxfs_mkdir(DEFAULT_PATH_TO_VCS_DIR, 0777) != 0)
 	{
+		perror("Failed to create directory");
 		exit(EXIT_FAILURE);
 	}
-
+	printf("1\n");
 	dirfd = open(".", O_DIRECTORY);
 	if (dirfd < 0)
 		exit(EXIT_FAILURE);
-
 	fuse_argv[0] = argv[0];
 	fuse_argv[1] = argv[1];
 #if FUSE_USE_VERSION < 30
@@ -585,6 +587,7 @@ int main(int argc, char *argv[])
 	fuse_argv[2] = "-osuid,dev,allow_other,default_permissions";
 #endif
 	fuse_argv[3] = NULL;
+	printf("21\n");
 
 	/*
 	TODO:
@@ -599,9 +602,14 @@ int main(int argc, char *argv[])
 		CREATE THEM !!!!
 	*/
 	// 1. ESTABLISH CONNECTION WITH SERVER
+	printf("12\n");
+
 	connection = connectToServer(getenv("SERVER_IP"), atoi(getenv("SERVER_PORT")));
+	printf("202\n");
+
 	if (connection == -1)
 		exit(EXIT_FAILURE);
+	printf("2\n");
 
 	// 3. CREATE DIFF FILE
 	//  пу пу пууууу
