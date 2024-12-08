@@ -575,7 +575,6 @@ int main(int argc, char *argv[])
 		perror("Failed to create directory");
 		exit(EXIT_FAILURE);
 	}
-	printf("1\n");
 	dirfd = open(".", O_DIRECTORY);
 	if (dirfd < 0)
 		exit(EXIT_FAILURE);
@@ -587,7 +586,6 @@ int main(int argc, char *argv[])
 	fuse_argv[2] = "-osuid,dev,allow_other,default_permissions";
 #endif
 	fuse_argv[3] = NULL;
-	printf("21\n");
 
 	/*
 	TODO:
@@ -602,14 +600,11 @@ int main(int argc, char *argv[])
 		CREATE THEM !!!!
 	*/
 	// 1. ESTABLISH CONNECTION WITH SERVER
-	printf("12\n");
 
 	connection = connectToServer(getenv("SERVER_IP"), atoi(getenv("SERVER_PORT")));
-	printf("202\n");
 
 	if (connection == -1)
 		exit(EXIT_FAILURE);
-	printf("2\n");
 
 	// 3. CREATE DIFF FILE
 	//  пу пу пууууу
