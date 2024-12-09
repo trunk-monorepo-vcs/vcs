@@ -47,14 +47,47 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 {
 	int fd;
 
-	fd = openat((int)(intptr_t)(fuse_get_context()->private_data),
-	            &name[1],
-	            fi->flags);
+	fd = openat((int)(intptr_t)(fuse_get_context()->private_data), &name[1], fi->flags);
+	if (fd >= 0)
+	{
+		fi->fh = (uint64_t)fd;
+		log("OPEN", name);
+		return 0;
+	}
+
+	char request[1024];
+	request[0] = 1; // OPEN request
+	size_t name_len = strlen(name);
+	uint32_t netw_name_len = htonl((uint32_t)name_len);
+	memcpy(request + 1, &netw_name_len, 4);
+	memcpy(request + 5, name, name_len);
+
+	char *response = sendReqAndHandleResp(connection, request, name_len + 2);
+	if (response == NULL)
+	{
+		perror("Error in sendReqAndHandleResp during OPEN request");
+		return -EIO;
+	}
+
+	int8_t status = response[8];
+	if (status == 1)
+	{
+		perror("Server error: Permission denied");
+		free(response);
+		return -EACCES;
+	}
+
+	free(response);
+
+	fd = openat((int)(intptr_t)(fuse_get_context()->private_data), &name[1], fi->flags);
 	if (fd < 0)
+	{
+		perror("Error opening file after server sync");
 		return -errno;
+	}
 
 	fi->fh = (uint64_t)fd;
-
+	log("OPEN", name);
 	return 0;
 }
 
