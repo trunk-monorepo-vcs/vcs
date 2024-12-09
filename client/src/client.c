@@ -41,9 +41,9 @@ int connectToServer(const char *ip, const int port) {
     return -1;
 }
 
-char *sendReqAndHandleResp(const int connection, const char *buffer, const int buffsize) {
+char *sendReqAndHandleResp(const int connection, const char *dataToSend, const int buffsize) {
     // Send data
-    if (send(connection, buffer, buffsize, 0) == -1) {
+    if (send(connection, dataToSend, buffsize, 0) == -1) {
         perror("Sending packet troubles");
         return NULL;
     }
@@ -54,18 +54,18 @@ char *sendReqAndHandleResp(const int connection, const char *buffer, const int b
         perror("Troubles in packSize reading");
         return NULL;
     }
-        
-    char *buffer = malloc(packageSize);
-    if (buffer == NULL) {
-        perror("NULL pointer");
-        return NULL;    
-    }
 
-    if (recv(connection, buffer, packageSize, 0) < packageSize) {
-        perror("Cannot recv to buffer");
-        free(buffer);
+    char *recvBuffer = malloc(packageSize);
+    if (recvBuffer == NULL) {
+        perror("NULL pointer");
         return NULL;
     }
 
-    return buffer;
+    if (recv(connection, recvBuffer, packageSize, 0) < packageSize) {
+        perror("Cannot recv to buffer");
+        free(recvBuffer);
+        return NULL;
+    }
+
+    return recvBuffer;
 }
