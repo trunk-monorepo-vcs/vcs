@@ -107,7 +107,7 @@ func readDir(conn net.Conn, connFinishingStatus *connectionFinishingStatus) {
 	response[0] = 0
 	lengthBuffer := make([]byte, 4)
 	for _, entry := range entries {
-		binary.LittleEndian.PutUint32(lengthBuffer, uint32(len(entry.Name())))
+		binary.BigEndian.PutUint32(lengthBuffer, uint32(len(entry.Name())))
 		response = slices.Concat(response, lengthBuffer)
 		response = slices.Concat(response, []byte(entry.Name()))
 	}
@@ -133,7 +133,7 @@ func getStat(conn net.Conn, connFinishingStatus *connectionFinishingStatus) {
 		response[1] = 1
 	}
 	sizeBuffer := make([]byte, 8)
-	binary.LittleEndian.PutUint64(sizeBuffer, uint64(info.Size()))
+	binary.BigEndian.PutUint64(sizeBuffer, uint64(info.Size()))
 	response = slices.Concat(response, sizeBuffer)
 
 	conn.Write(response)
@@ -166,7 +166,7 @@ func readFile(conn net.Conn, connFinishingStatus *connectionFinishingStatus) {
 	response := make([]byte, 1)
 	response[0] = 0
 	sizeBuffer := make([]byte, 8)
-	binary.LittleEndian.PutUint64(sizeBuffer, uint64(fileSize))
+	binary.BigEndian.PutUint64(sizeBuffer, uint64(fileSize))
 	response = slices.Concat(response, sizeBuffer)
 	response = slices.Concat(response, data)
 
@@ -181,7 +181,7 @@ func handlersErrorHandling(connFinishingStatus *connectionFinishingStatus, errSt
 	connFinishingStatus.status = 1
 }
 
-func getPathFromRequest(conn net.Conn, connFinishingStatus *connectionFinishingStatus) string {
+func  getPathFromRequest(conn net.Conn, connFinishingStatus *connectionFinishingStatus) string {
 	pathLengthBytes := make([]byte, 4)
 	_, err := conn.Read(pathLengthBytes)
 	if err != nil {
