@@ -1,6 +1,3 @@
-#ifndef PSEUDO_FILE_H
-#define PSEUDO_FILE_H
-
 #include <time.h>
 
 #define MAX_FILENAME_LENGTH 256
