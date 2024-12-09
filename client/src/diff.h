@@ -14,6 +14,7 @@ typedef struct {
     char content[MAX_FILE_CONTENT_LENGTH];
     int version;
     time_t last_modified;
+    int changed;
 } PseudoFile;
 
 extern PseudoFile* files[MAX_FILES];
