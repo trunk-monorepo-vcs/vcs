@@ -1,3 +1,4 @@
+#define FUSE_USE_VERSION 30
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -10,10 +11,14 @@
 #include <dirent.h>
 #include <stdlib.h>
 #include <stddef.h>
-#include <fuse.h>
+#if FUSE_USE_VERSION >= 30
+	#include <fuse3/fuse.h>
+#else
+	#include <fuse.h>
+#endif
 
 #ifndef AT_EMPTY_PATH
-#	define AT_EMPTY_PATH 0x1000
+	#define AT_EMPTY_PATH 0x1000
 #endif
 
 /* CLIENT-SERVER COMMUNICATION */
@@ -43,7 +48,7 @@ void log_buf(char *msg_type, char *name, int size, char *buf) {
 	}
 }
 
-static int pxfs_open(const char *name, struct fuse_file_info *fi)
+int pxfs_open(const char *name, struct fuse_file_info *fi)
 {
 	int fd;
 
@@ -91,7 +96,7 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int pxfs_create(const char *name,
+int pxfs_create(const char *name,
 					   mode_t mode,
 					   struct fuse_file_info *fi)
 {
@@ -125,7 +130,7 @@ static int pxfs_create(const char *name,
 	return 0;
 }
 
-static int pxfs_close(const char *name, struct fuse_file_info *fi)
+int pxfs_close(const char *name, struct fuse_file_info *fi)
 {
 	if (close((int)fi->fh))
 		return -errno;
@@ -137,9 +142,9 @@ static int pxfs_close(const char *name, struct fuse_file_info *fi)
 }
 
 #if FUSE_USE_VERSION < 30
-static int pxfs_truncate(const char *name, off_t size)
+int pxfs_truncate(const char *name, off_t size)
 #else
-static int pxfs_truncate(const char *name,
+int pxfs_truncate(const char *name,
                          off_t size,
                          struct fuse_file_info *fi)
 #endif
@@ -171,7 +176,7 @@ static int pxfs_truncate(const char *name,
 	return err;
 }
 
-static int pxfs_getattr(const char *name,
+int pxfs_getattr(const char *name,
 #if FUSE_USE_VERSION < 30
                         struct stat *stbuf)
 #else
@@ -230,8 +235,9 @@ static int pxfs_getattr(const char *name,
 		}
 
 		free(response);
-		return 0;
-#endif
+	}
+	return 0;
+#else
 	ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
 	              &name[1],
 	              stbuf,
@@ -241,10 +247,10 @@ static int pxfs_getattr(const char *name,
 		return -errno;
 
 	return 0;
+#endif
 }
 
-static int pxfs_access(const char *name, int mask)
-{
+int pxfs_access(const char *name, int mask) {
 	const char *namep = name;
 
 	if ((name[0] != '/') || (name[1] != '\0'))
@@ -259,7 +265,7 @@ static int pxfs_access(const char *name, int mask)
 	return 0;
 }
 
-static int pxfs_read(const char *path,
+int pxfs_read(const char *path,
                      char *buf,
                      size_t size,
                      off_t off,
@@ -277,14 +283,14 @@ static int pxfs_read(const char *path,
 	return (int)out;
 }
 
-static int pxfs_write(const char *path,
+int pxfs_write(const char *path,
                       const char *buf,
 					  size_t size,
 					  off_t off,
 					  struct fuse_file_info *fi)
 {
   		ssize_t out;
-		//out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
+		// out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
 		if (out < 0)
 			return -errno;
 
@@ -299,7 +305,7 @@ static int pxfs_write(const char *path,
 		return (int)out;
 }
 
-static int pxfs_unlink(const char *name)
+int pxfs_unlink(const char *name)
 {
 	if (unlinkat((int)(intptr_t)(fuse_get_context()->private_data),
 	             &name[1],
@@ -309,7 +315,7 @@ static int pxfs_unlink(const char *name)
 	return 0;
 }
 
-static int pxfs_mkdir(const char *name, mode_t mode)
+int pxfs_mkdir(const char *name, mode_t mode)
 {
 	const struct fuse_context *ctx;
 	int dirfd, err;
@@ -317,6 +323,7 @@ static int pxfs_mkdir(const char *name, mode_t mode)
 	ctx = fuse_get_context();
 	dirfd = (int)(intptr_t)ctx->private_data;
 
+	
 	if (mkdirat(dirfd, &name[1], mode) < 0)
 		return -errno;
 
@@ -333,7 +340,7 @@ static int pxfs_mkdir(const char *name, mode_t mode)
 	return 0;
 }
 
-static int pxfs_rmdir(const char *name)
+int pxfs_rmdir(const char *name)
 {
 	if (unlinkat((int)(intptr_t)(fuse_get_context()->private_data),
 	             &name[1],
@@ -343,7 +350,7 @@ static int pxfs_rmdir(const char *name)
 	return 0;
 }
 
-static int pxfs_opendir(const char *name, struct fuse_file_info *fi)
+int pxfs_opendir(const char *name, struct fuse_file_info *fi)
 {
 	DIR *dirp;
 	int fd, err, dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
@@ -367,7 +374,7 @@ static int pxfs_opendir(const char *name, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int pxfs_closedir(const char *name, struct fuse_file_info *fi)
+int pxfs_closedir(const char *name, struct fuse_file_info *fi)
 {
 	if (closedir((DIR *)(uintptr_t)fi->fh) < 0)
 		return -errno;
@@ -375,7 +382,7 @@ static int pxfs_closedir(const char *name, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int pxfs_readdir(const char *path,
+int pxfs_readdir(const char *path,
                         void *buf,
                         fuse_fill_dir_t filler,
                         off_t offset,
@@ -491,7 +498,7 @@ static int pxfs_readdir(const char *path,
     return 0;
 }
 
-static int pxfs_symlink(const char *to, const char *from)
+int pxfs_symlink(const char *to, const char *from)
 {
 	const struct fuse_context *ctx;
 	int dirfd, err;
@@ -515,7 +522,7 @@ static int pxfs_symlink(const char *to, const char *from)
 	return 0;
 }
 
-static int pxfs_readlink(const char *name, char *buf, size_t size)
+int pxfs_readlink(const char *name, char *buf, size_t size)
 {
 	ssize_t len;
 
@@ -530,7 +537,7 @@ static int pxfs_readlink(const char *name, char *buf, size_t size)
 	return 0;
 }
 
-static int pxfs_mknod(const char *name, mode_t mode, dev_t dev)
+int pxfs_mknod(const char *name, mode_t mode, dev_t dev)
 {
 	if (mknodat((int)(intptr_t)(fuse_get_context()->private_data),
 	            &name[1],
@@ -542,9 +549,9 @@ static int pxfs_mknod(const char *name, mode_t mode, dev_t dev)
 }
 
 #if FUSE_USE_VERSION < 30
-static int pxfs_chmod(const char *name, mode_t mode)
+int pxfs_chmod(const char *name, mode_t mode)
 #else
-static int pxfs_chmod(const char *name, mode_t mode, struct fuse_file_info *fi)
+int pxfs_chmod(const char *name, mode_t mode, struct fuse_file_info *fi)
 #endif
 {
 	int ret;
@@ -564,7 +571,7 @@ static int pxfs_chmod(const char *name, mode_t mode, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int pxfs_chown(const char *name,
+int pxfs_chown(const char *name,
                       uid_t uid,
 #if FUSE_USE_VERSION < 30
                       gid_t gid)
@@ -592,7 +599,7 @@ static int pxfs_chown(const char *name,
 	return 0;
 }
 
-static int pxfs_utimens(const char *name,
+int pxfs_utimens(const char *name,
 #if FUSE_USE_VERSION < 30
                         const struct timespec tv[2])
 #else
@@ -618,7 +625,7 @@ static int pxfs_utimens(const char *name,
 	return 0;
 }
 
-static int pxfs_rename(const char *oldpath,
+int pxfs_rename(const char *oldpath,
 #if FUSE_USE_VERSION < 30
                        const char *newpath)
 #else
@@ -667,12 +674,10 @@ struct fuse_operations pxfs_oper = {
 	.rename		= pxfs_rename
 };
 
-#define DEFAULT_PATH_TO_VCS_DIR "vcs"
+#define DEFAULT_PATH_TO_VCS_DIR "/VCSTEST"
 
-extern struct fuse_operations pxfs_oper;
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
 	char *fuse_argv[4];
 	int dirfd, ret;
 
@@ -681,12 +686,15 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-    if (mkdir(DEFAULT_PATH_TO_VCS_DIR, 0777) != 0)
-        exit(EXIT_FAILURE);
+    // if (mkdir(DEFAULT_PATH_TO_VCS_DIR, 0777) != 0) {
+    //     exit(EXIT_FAILURE);
+	// }
 
-	dirfd = open(".", O_DIRECTORY);
-	if (dirfd < 0)
+	dirfd = open(argv[1], O_DIRECTORY);
+	if (dirfd < 0) {
+		printf("Crash after trying this dir.\n");
 		exit(EXIT_FAILURE);
+	}
 
 	fuse_argv[0] = argv[0];
 	fuse_argv[1] = argv[1];
@@ -709,8 +717,9 @@ int main(int argc, char *argv[])
 	!!!! In process of creating this functions you can create auxiliary functions
 		CREATE THEM !!!!
 	*/
+	//log("Try to connect");
 	//1. ESTABLISH CONNECTION WITH SERVER 
-	connection = connectToServer(getenv("SERVER_IP"), atoi(getenv("SERVER_PORT")));
+	connection = connectToServer("127.0.0.1", 9999);
 	if (connection == -1) 
 		exit(EXIT_FAILURE);
 
@@ -721,5 +730,5 @@ int main(int argc, char *argv[])
 	ret = fuse_main(3, fuse_argv, &pxfs_oper, (void *)(intptr_t)dirfd);
 
 	close(dirfd);
-	exit(ret);
+	exit(ret); 
 }

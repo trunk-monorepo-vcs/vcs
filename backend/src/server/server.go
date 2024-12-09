@@ -39,6 +39,8 @@ func InitServer(port string) (int, error) {
 		return 1, err
 	}
 
+	log.Output(1, "Install connection with client")
+
 	channel := make(chan *connectionFinishingStatus)
 	// Handle the connection in a new goroutine
 	go handleConnection(conn, channel)
@@ -59,7 +61,7 @@ func InitServer(port string) (int, error) {
 
 func handleConnection(conn net.Conn, channel chan *connectionFinishingStatus) {
 	connFinishingStatus := connectionFinishingStatus{"", 0, conn.RemoteAddr()}
-
+	log.Output(1, "Handle conn")
 	// Close the connection and send status when we're done
 	defer func() {
 		conn.Close()
