@@ -8,7 +8,8 @@
 #include <stdint.h>
 #include <limits.h>
 #include <dirent.h>
-
+#include <stdlib.h>
+#include <stddef.h>
 #include <fuse.h>
 
 #ifndef AT_EMPTY_PATH
@@ -21,6 +22,7 @@
 	Static var that contains descriptor of socket with server.
 	Defines by function from client.h
 */
+#include "diff.h"
 static int connection;
 
 
@@ -45,20 +47,53 @@ static int pxfs_open(const char *name, struct fuse_file_info *fi)
 {
 	int fd;
 
-	fd = openat((int)(intptr_t)(fuse_get_context()->private_data),
-	            &name[1],
-	            fi->flags);
+	fd = openat((int)(intptr_t)(fuse_get_context()->private_data), &name[1], fi->flags);
+	if (fd >= 0)
+	{
+		fi->fh = (uint64_t)fd;
+		log("OPEN", name);
+		return 0;
+	}
+
+	char request[1024];
+	request[0] = 1; // OPEN request
+	size_t name_len = strlen(name);
+	uint32_t netw_name_len = htonl((uint32_t)name_len);
+	memcpy(request + 1, &netw_name_len, 4);
+	memcpy(request + 5, name, name_len);
+
+	char *response = sendReqAndHandleResp(connection, request, name_len + 2);
+	if (response == NULL)
+	{
+		perror("Error in sendReqAndHandleResp during OPEN request");
+		return -EIO;
+	}
+
+	int8_t status = response[8];
+	if (status == 1)
+	{
+		perror("Server error: Permission denied");
+		free(response);
+		return -EACCES;
+	}
+
+	free(response);
+
+	fd = openat((int)(intptr_t)(fuse_get_context()->private_data), &name[1], fi->flags);
 	if (fd < 0)
+	{
+		perror("Error opening file after server sync");
 		return -errno;
+	}
 
 	fi->fh = (uint64_t)fd;
-
+	log("OPEN", name);
 	return 0;
 }
 
 static int pxfs_create(const char *name,
-                       mode_t mode,
-                       struct fuse_file_info *fi)
+					   mode_t mode,
+					   struct fuse_file_info *fi)
 {
 	const struct fuse_context *ctx;
 	int dirfd, fd, err;
@@ -78,6 +113,12 @@ static int pxfs_create(const char *name,
 
 	fi->fh = (uint64_t)fd;
 
+	char initial_content[MAX_FILE_CONTENT_LENGTH] = {0};
+	PseudoFile* file = create_pseudo_file(name, initial_content);
+	if (file == NULL) {
+		close(fd);
+		return -ENOMEM;
+	}
 	// EDIT!!
 	log("CREATE", name);
 
@@ -136,20 +177,65 @@ static int pxfs_getattr(const char *name,
 #else
                         struct stat *stbuf,
                         struct fuse_file_info *fi)
-
 #endif
 {
 	int ret;
 
 #if FUSE_USE_VERSION >= 30
-	if (fi)
+	if (fi) {
+		// local
 		ret = fstat((int)fi->fh, stbuf);
-	else
+		if (ret < 0)
+			return -errno;
+	} else {
+		char *response = NULL;
+
+		// Prepare the request to get an attribute
+		char request[1024];
+		//type of request
+		request[0] = 3;
+		//path length
+		int path_length = strlen(name);
+		if (path_length + 5 > sizeof(request)) {
+			perror("Path length exceeds buffer size");
+			return -ENAMETOOLONG;
+		}
+		uint32_t net_path_length = htonl(path_length);
+		memcpy(&request[1], &net_path_length, 4);
+		//path
+		memcpy(&request[5], name, path_length);
+
+		// Send the request and receive the response
+		response = sendReqAndHandleResp(connection, request, path_length + 5);
+		if (response == NULL) {
+			perror("Error of function sendReqAndHandleResp");
+			return -EIO;
+		}
+
+		// Process the response and fill the stat structure
+		int file_exists = response[0];
+		if (file_exists == 0) {
+			// File exists, parse the stat structure
+			uint32_t struct_size = ntohl(*(uint32_t *)&response[1]);
+			// Fill the stat structure with mode, nlink, and size
+			stbuf->st_nlink = 1;
+			stbuf->st_mode = ntohl(*(uint32_t *)&response[5]);
+			stbuf->st_size = ntohl(*(uint32_t *)&response[9]);
+		} else if (file_exists == 1) {
+			// file does not exist
+			uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
+			memcpy(stbuf, &response[5], error_length);
+			free(response);
+			return -ENOENT;
+		}
+
+		free(response);
+		return 0;
 #endif
-		ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
-	                  &name[1],
-	                  stbuf,
-	                  AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW);
+	ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
+	              &name[1],
+	              stbuf,
+	              AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW);
 
 	if (ret < 0)
 		return -errno;
@@ -193,19 +279,24 @@ static int pxfs_read(const char *path,
 
 static int pxfs_write(const char *path,
                       const char *buf,
-                      size_t size,
-                      off_t off,
-                      struct fuse_file_info *fi)
+					  size_t size,
+					  off_t off,
+					  struct fuse_file_info *fi)
 {
-	ssize_t out;
+  		ssize_t out;
+		//out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
+		if (out < 0)
+			return -errno;
 
-	out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
-	if (out < 0)
-		return -errno;
-	// EDIT!!!
-	log_buf("WRITE", buf, size, path);
+		// Обновление псевдофайла
+		PseudoFile* file = find_file(path);
+		if (file != NULL) {
+			update_pseudo_file(file, buf);
+		}
+		// EDIT!!!
+		log_buf("WRITE", buf, size, path);
 
-	return (int)out;
+		return (int)out;
 }
 
 static int pxfs_unlink(const char *name)
@@ -295,36 +386,109 @@ static int pxfs_readdir(const char *path,
                         enum fuse_readdir_flags flags)
 #endif
 {
-	struct stat stbuf;
-	struct dirent ent, *pent;
-	DIR *dirp = (DIR *)(uintptr_t)fi->fh;
-	int dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
+    struct stat stbuf;
+    struct dirent ent, *pent;
+    DIR *dirp;
+    int dirfd;
 
-	if (offset == 0)
-		rewinddir(dirp);
+#if FUSE_USE_VERSION >= 30
+    if (fi) {
+        // local readdir
+        dirp = (DIR *)(uintptr_t)fi->fh;
+        dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
 
-	do {
-		if (readdir_r(dirp, &ent, &pent) != 0)
-			return -errno;
+        if (offset == 0)
+            rewinddir(dirp);
 
-		if (!pent)
-			break;
+        do {
+            if (readdir_r(dirp, &ent, &pent) != 0)
+                return -errno;
 
-		if (fstatat(dirfd,
-		            pent->d_name,
-		            &stbuf,
-		            AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
-			return -errno;
+            if (!pent)
+                break;
+
+            if (fstatat(dirfd,
+                        pent->d_name,
+                        &stbuf,
+                        AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
+                return -errno;
+
+                return -ENOMEM;
+        } while (1);
+    } else {
+        // prepare a request to read the directory
+        char request[1024];
+        request[0] = 2;
+        int path_length = strlen(path);
+        memcpy(request + 1, &path_length, 4);
+        memcpy(request + 5, path, path_length);
+
+        // send the request and receive the response
+        char *response = sendReqAndHandleResp(connection, request, path_length + 5);
+        if (response == NULL) {
+            perror("Error of function sendReqAndHandleResp");
+            return -EIO;
+        }
+
+        // process the response and fill the stat structure
+        int file_exists = response[0];
+        if (file_exists == 0) {
+            // file exists
+            uint32_t names_count = ntohl(*(uint32_t *)&response[1]);
+            int offset = 5;
+	    // listing files
+            for (uint32_t i = 0; i < names_count; i++) {
+                uint8_t name_length = response[offset];
+                char name[name_length + 1];
+                memcpy(name, &response[offset + 1], name_length);
+                name[name_length] = '\0';
+                printf("Name: %s\n", name);
+                offset += 1 + name_length;
+            }
+        } else if (file_exists == 1){
+            // file does not exist
+            uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
+            char error_message[error_length + 1];
+            memcpy(error_message, &response[5], error_length);
+            error_message[error_length] = '\0';
+            printf("Error: %s\n", error_message);
+        }
+
+        // free the allocated memory
+        free(response);
+
+        return 0;
+    }
+#else
+    dirp = (DIR *)(uintptr_t)fi->fh;
+    dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
+
+    if (offset == 0)
+        rewinddir(dirp);
+
+    do {
+        if (readdir_r(dirp, &ent, &pent) != 0)
+            return -errno;
+
+        if (!pent)
+            break;
+
+        if (fstatat(dirfd,
+                    pent->d_name,
+                    &stbuf,
+                    AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
+            return -errno;
 
 #if FUSE_USE_VERSION < 30
-		if (filler(buf, pent->d_name, &stbuf, 0) == 1)
+        if (filler(buf, pent->d_name, &stbuf, 0) == 1)
 #else
-		if (filler(buf, pent->d_name, &stbuf, 0, flags) == 1)
+        if (filler(buf, pent->d_name, &stbuf, 0, flags) == 1)
 #endif
-			return -ENOMEM;
-	} while (1);
+            return -ENOMEM;
+    } while (1);
+#endif
 
-	return 0;
+    return 0;
 }
 
 static int pxfs_symlink(const char *to, const char *from)
