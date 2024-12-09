@@ -199,7 +199,7 @@ static int pxfs_write(const char *path,
 {
 	ssize_t out;
 
-	// out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
+	out = pwrite((int)fi->fh, buf, size > INT_MAX ? INT_MAX : size, off);
 	if (out < 0)
 		return -errno;
 	// EDIT!!!
