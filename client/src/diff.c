@@ -31,6 +31,7 @@ PseudoFile* create_pseudo_file(const char* filename, const char* content) {
     strncpy(file->real_name, filename, MAX_FILENAME_LENGTH);
     strncpy(file->content, content, MAX_FILE_CONTENT_LENGTH);
     file->version = 1;
+    file->changed = 0;
     file->last_modified = time(NULL);
     files[file_count++] = file;
     return file;
@@ -44,6 +45,7 @@ void update_pseudo_file(PseudoFile* file, const char* new_content) {
 
     strncpy(file->content, new_content, MAX_FILE_CONTENT_LENGTH);
     file->version++;
+    file->changed = 1;
     file->last_modified = time(NULL);
 }
 
