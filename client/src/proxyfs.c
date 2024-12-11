@@ -398,30 +398,43 @@ int pxfs_readdir(const char *path,
     DIR *dirp;
     int dirfd;
 
-#if FUSE_USE_VERSION >= 30
     if (fi) {
         // local readdir
         dirp = (DIR *)(uintptr_t)fi->fh;
         dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
 
+		log("READDIR", pent->d_name);
+
         if (offset == 0)
             rewinddir(dirp);
 
-        do {
-            if (readdir_r(dirp, &ent, &pent) != 0)
-                return -errno;
+            dirp = (DIR *)(uintptr_t)fi->fh;
+    dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
 
-            if (!pent)
-                break;
+    if (offset == 0)
+        rewinddir(dirp);
 
-            if (fstatat(dirfd,
-                        pent->d_name,
-                        &stbuf,
-                        AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
-                return -errno;
+    do {
+    	if (readdir_r(dirp, &ent, &pent) != 0)
+            return -errno;
 
-                return -ENOMEM;
-        } while (1);
+        if (!pent)
+            break;
+
+        if (fstatat(dirfd,
+                    pent->d_name,
+                    &stbuf,
+                    AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
+            return -errno;
+
+		#if FUSE_USE_VERSION < 30
+				if (filler(buf, pent->d_name, &stbuf, 0) == 1)
+		#else
+				if (filler(buf, pent->d_name, &stbuf, 0, flags) == 1)
+		#endif
+					return -ENOMEM;
+		} while (1);
+
     } else {
         // prepare a request to read the directory
         char request[1024];
@@ -443,7 +456,7 @@ int pxfs_readdir(const char *path,
             // file exists
             uint32_t names_count = ntohl(*(uint32_t *)&response[1]);
             int offset = 5;
-	    // listing files
+	    	// listing files
             for (uint32_t i = 0; i < names_count; i++) {
                 uint8_t name_length = response[offset];
                 char name[name_length + 1];
@@ -460,40 +473,9 @@ int pxfs_readdir(const char *path,
             error_message[error_length] = '\0';
             printf("Error: %s\n", error_message);
         }
-
         // free the allocated memory
         free(response);
-
-        return 0;
     }
-#else
-    dirp = (DIR *)(uintptr_t)fi->fh;
-    dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
-
-    if (offset == 0)
-        rewinddir(dirp);
-
-    do {
-        if (readdir_r(dirp, &ent, &pent) != 0)
-            return -errno;
-
-        if (!pent)
-            break;
-
-        if (fstatat(dirfd,
-                    pent->d_name,
-                    &stbuf,
-                    AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
-            return -errno;
-
-#if FUSE_USE_VERSION < 30
-        if (filler(buf, pent->d_name, &stbuf, 0) == 1)
-#else
-        if (filler(buf, pent->d_name, &stbuf, 0, flags) == 1)
-#endif
-            return -ENOMEM;
-    } while (1);
-#endif
 
     return 0;
 }
@@ -686,13 +668,14 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-    // if (mkdir(DEFAULT_PATH_TO_VCS_DIR, 0777) != 0) {
+    // if (mkdir(argv[1], 0777) != 0) {
     //     exit(EXIT_FAILURE);
 	// }
 
 	dirfd = open(argv[1], O_DIRECTORY);
 	if (dirfd < 0) {
-		printf("Crash after trying this dir.\n");
+		printf("Crash after trying this dir: %s.\n", argv[1]);
+		perror("Try other mountpoint");
 		exit(EXIT_FAILURE);
 	}
 
