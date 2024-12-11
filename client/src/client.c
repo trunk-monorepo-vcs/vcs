@@ -21,20 +21,18 @@ int connectToServer(const char *ip, const int port) {
     memset(&sockaddr, 0, sizeof(sockaddr));
 
     sockaddr.sin_family = AF_INET;
-    sockaddr.sin_port = port == 0 ? 88 : htons(port);
+    sockaddr.sin_port = htons(port);
 
-    int ipAddr= inet_pton(AF_INET, ip == NULL ? "127.0.0.1" : ip, &sockaddr);
-
-
-    switch (ipAddr) {
-        case 1:
+    if (inet_pton(AF_INET, ip == NULL ? "127.0.0.1" : ip, &sockaddr.sin_addr) != 1) {
+        perror("Gotta some troubles");
+    } else {
+        if (connect(connection, (struct sockaddr*)&sockaddr, sizeof(sockaddr) == -1)) {
+            perror("Gotta some troubles :( with connection");
+            printf("ip: %s ; port: %d\n", ip, port);
+        } else {
+            printf("Connect with succes!!\n");
             return connection;
-        case 0:
-            perror("Invalid address");
-            break;
-        case -1:
-            perror("Invalid AF");
-            break;
+        }
     }
 
     close(connection);
