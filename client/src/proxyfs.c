@@ -238,7 +238,7 @@ int pxfs_getattr(const char *name,
 		free(response);
 	}
 	return 0;
-#else
+#endif
 	ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
 	              &name[1],
 	              stbuf,
@@ -248,7 +248,6 @@ int pxfs_getattr(const char *name,
 		return -errno;
 
 	return 0;
-#endif
 }
 
 int pxfs_access(const char *name, int mask) {
