@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
+#include <string.h>
 #include <stdint.h>
 #include <limits.h>
 #include <dirent.h>
