@@ -44,9 +44,14 @@ func InitServer(port string) (int, error) {
 
 		log.Output(1, "Install connection with client")
 
+
 		channel := make(chan *connectionFinishingStatus)
 		// Handle the connection
 		handleConnection(conn, channel)
+
+	channel := make(chan *connectionFinishingStatus)
+	// Handle the connection in a new goroutine
+	go handleConnection(conn, channel)
 
 		// Geting connectionFInishingStatus
 		var connFinishingStatus *connectionFinishingStatus = <-channel
@@ -237,7 +242,8 @@ func handlersErrorHandling(connFinishingStatus *connectionFinishingStatus, errSt
 }
 
 
-func getPathFromRequest(conn net.Conn, connFinishingStatus *connectionFinishingStatus) string {
+func  getPathFromRequest(conn net.Conn, connFinishingStatus *connectionFinishingStatus) string {
+
 	pathLengthBytes := make([]byte, 4)
 	_, err := conn.Read(pathLengthBytes)
 	if err != nil {

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
+#include <string.h>
 #include <stdint.h>
 #include <limits.h>
 #include <dirent.h>
@@ -246,7 +247,10 @@ int pxfs_getattr(const char *name,
 		free(response);
 	}
 	return 0;
+
 #else
+
+#endif
 	ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
 	              &name[1],
 	              stbuf,
@@ -360,6 +364,16 @@ int pxfs_rmdir(const char *name)
 }
 
 
+int pxfs_opendir(const char *name, struct fuse_file_info *fi)
+{
+	DIR *dirp;
+	int fd, err, dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
+
+	if ((name[0] == '/') && (name[1] == '\0'))
+		fd = dup(dirfd);
+	else
+		fd = openat(dirfd, &name[1], O_DIRECTORY);
+
 int pxfs_opendir(const char *name, struct fuse_file_info *fi) {
     int fd = openat((int)(intptr_t)(fuse_get_context()->private_data), &name[1], O_DIRECTORY);
     if (fd < 0) {
@@ -411,6 +425,7 @@ int pxfs_readdir(const char *path,
 
         if (offset == 0)
             rewinddir(dirp);
+
 
         dirp = (DIR *)(uintptr_t)fi->fh;
     	dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
@@ -484,6 +499,75 @@ int pxfs_readdir(const char *path,
 			// free the allocated memory
 			free(response);
 		}
+            dirp = (DIR *)(uintptr_t)fi->fh;
+    dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
+
+    if (offset == 0)
+        rewinddir(dirp);
+
+    do {
+    	if (readdir_r(dirp, &ent, &pent) != 0)
+            return -errno;
+
+        if (!pent)
+            break;
+
+        if (fstatat(dirfd,
+                    pent->d_name,
+                    &stbuf,
+                    AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
+            return -errno;
+
+		#if FUSE_USE_VERSION < 30
+				if (filler(buf, pent->d_name, &stbuf, 0) == 1)
+		#else
+				if (filler(buf, pent->d_name, &stbuf, 0, flags) == 1)
+		#endif
+					return -ENOMEM;
+		} while (1);
+
+    } else {
+        // prepare a request to read the directory
+        char request[1024];
+        request[0] = 2;
+        int path_length = strlen(path);
+        memcpy(request + 1, &path_length, 4);
+        memcpy(request + 5, path, path_length);
+
+        // send the request and receive the response
+        char *response = sendReqAndHandleResp(connection, request, path_length + 5);
+        if (response == NULL) {
+            perror("Error of function sendReqAndHandleResp");
+            return -EIO;
+        }
+
+        // process the response and fill the stat structure
+        int file_exists = response[0];
+        if (file_exists == 0) {
+            // file exists
+            uint32_t names_count = ntohl(*(uint32_t *)&response[1]);
+            int offset = 5;
+	    	// listing files
+            for (uint32_t i = 0; i < names_count; i++) {
+                uint8_t name_length = response[offset];
+                char name[name_length + 1];
+                memcpy(name, &response[offset + 1], name_length);
+                name[name_length] = '\0';
+                printf("Name: %s\n", name);
+                offset += 1 + name_length;
+            }
+        } else if (file_exists == 1){
+            // file does not exist
+            uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
+            char error_message[error_length + 1];
+            memcpy(error_message, &response[5], error_length);
+            error_message[error_length] = '\0';
+            printf("Error: %s\n", error_message);
+        }
+        // free the allocated memory
+        free(response);
+    }
+
 
     return 0;
 }

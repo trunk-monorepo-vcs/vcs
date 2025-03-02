@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
     "github.com/joho/godotenv"
-    "log"
 )
 
 
@@ -29,6 +28,7 @@ func main() {
     // Init backend application
     status, err := server.InitServer(port)
     if status != 0 {
-        log.Errorf("Error %s", err)
+        err.Error()
+        fmt.Errorf("Cannot init server on %d port", port)
     }
 }

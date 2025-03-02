@@ -22,4 +22,3 @@ PseudoFile* create_pseudo_file(const char* filename, const char* content);
 void update_pseudo_file(PseudoFile* file, const char* new_content);
 PseudoFile* find_file(const char* filename);
 
-#endif
