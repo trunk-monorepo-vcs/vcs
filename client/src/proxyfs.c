@@ -61,6 +61,11 @@ int pxfs_open(const char *name, struct fuse_file_info *fi)
 		return 0;
 	}
 
+	//1. ESTABLISH CONNECTION WITH SERVER 
+	connection = connectToServer("127.0.0.1", 9999);
+	if (connection == -1) 
+		exit(EXIT_FAILURE);
+		
 	char request[1024];
 	request[0] = 1; // OPEN request
 	size_t name_len = strlen(name);
@@ -194,6 +199,10 @@ int pxfs_getattr(const char *name,
 		if (ret < 0)
 			return -errno;
 	} else {
+		//1. ESTABLISH CONNECTION WITH SERVER 
+		connection = connectToServer("127.0.0.1", 9999);
+		if (connection == -1) 
+			exit(EXIT_FAILURE);
 		char *response = NULL;
 
 		// Prepare the request to get an attribute
@@ -217,7 +226,7 @@ int pxfs_getattr(const char *name,
 			perror("Error of function sendReqAndHandleResp");
 			return -EIO;
 		}
-
+		fuse_log(FUSE_LOG_DEBUG, "Response from server: %s", response);
 		// Process the response and fill the stat structure
 		int file_exists = response[0];
 		if (file_exists == 0) {
@@ -238,6 +247,9 @@ int pxfs_getattr(const char *name,
 		free(response);
 	}
 	return 0;
+
+#else
+
 #endif
 	ret = fstatat((int)(intptr_t)(fuse_get_context()->private_data),
 	              &name[1],
@@ -248,6 +260,7 @@ int pxfs_getattr(const char *name,
 		return -errno;
 
 	return 0;
+#endif
 }
 
 int pxfs_access(const char *name, int mask) {
@@ -350,6 +363,7 @@ int pxfs_rmdir(const char *name)
 	return 0;
 }
 
+
 int pxfs_opendir(const char *name, struct fuse_file_info *fi)
 {
 	DIR *dirp;
@@ -360,18 +374,22 @@ int pxfs_opendir(const char *name, struct fuse_file_info *fi)
 	else
 		fd = openat(dirfd, &name[1], O_DIRECTORY);
 
-	if (fd < 0)
-		return -errno;
+int pxfs_opendir(const char *name, struct fuse_file_info *fi) {
+    int fd = openat((int)(intptr_t)(fuse_get_context()->private_data), &name[1], O_DIRECTORY);
+    if (fd < 0) {
+        perror("Error opening directory");
+        return -errno;
+    }
 
-	dirp = fdopendir(fd);
-	if (!dirp) {
-		err = -errno;
-		close(fd);
-		return err;
-	}
+    DIR *dirp = fdopendir(fd);
+    if (!dirp) {
+        close(fd);
+        perror("Error opening DIR stream");
+        return -errno;
+    }
 
-	fi->fh = (uint64_t)(uintptr_t)dirp;
-	return 0;
+    fi->fh = (uint64_t)(uintptr_t)dirp;
+    return 0;
 }
 
 int pxfs_closedir(const char *name, struct fuse_file_info *fi)
@@ -408,6 +426,79 @@ int pxfs_readdir(const char *path,
         if (offset == 0)
             rewinddir(dirp);
 
+
+        dirp = (DIR *)(uintptr_t)fi->fh;
+    	dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
+
+		if (offset == 0)
+			rewinddir(dirp);
+
+		do {
+			if (readdir_r(dirp, &ent, &pent) != 0)
+				return -errno;
+
+			if (!pent)
+				break;
+
+			if (fstatat(dirfd,
+						pent->d_name,
+						&stbuf,
+						AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) < 0)
+				return -errno;
+
+			#if FUSE_USE_VERSION < 30
+					if (filler(buf, pent->d_name, &stbuf, 0) == 1)
+			#else
+					if (filler(buf, pent->d_name, &stbuf, 0, flags) == 1)
+			#endif
+						return -ENOMEM;
+			} while (1);
+
+		} else {
+			//1. ESTABLISH CONNECTION WITH SERVER 
+			connection = connectToServer("127.0.0.1", 9999);
+			if (connection == -1) 
+				exit(EXIT_FAILURE);
+			// prepare a request to read the directory
+			char request[1024];
+			request[0] = 2;
+			int path_length = strlen(path);
+			memcpy(request + 1, &path_length, 4);
+			memcpy(request + 5, path, path_length);
+
+			// send the request and receive the response
+			char *response = sendReqAndHandleResp(connection, request, path_length + 5);
+			if (response == NULL) {
+				perror("Error of function sendReqAndHandleResp");
+				return -EIO;
+			}
+
+			// process the response and fill the stat structure
+			int file_exists = response[0];
+			if (file_exists == 0) {
+				// file exists
+				uint32_t names_count = ntohl(*(uint32_t *)&response[1]);
+				int offset = 5;
+				// listing files
+				for (uint32_t i = 0; i < names_count; i++) {
+					uint8_t name_length = response[offset];
+					char name[name_length + 1];
+					memcpy(name, &response[offset + 1], name_length);
+					name[name_length] = '\0';
+					printf("Name: %s\n", name);
+					offset += 1 + name_length;
+				}
+			} else if (file_exists == 1){
+				// file does not exist
+				uint32_t error_length = ntohl(*(uint32_t *)&response[1]);
+				char error_message[error_length + 1];
+				memcpy(error_message, &response[5], error_length);
+				error_message[error_length] = '\0';
+				printf("Error: %s\n", error_message);
+			}
+			// free the allocated memory
+			free(response);
+		}
             dirp = (DIR *)(uintptr_t)fi->fh;
     dirfd = (int)(intptr_t)(fuse_get_context()->private_data);
 
@@ -476,6 +567,7 @@ int pxfs_readdir(const char *path,
         // free the allocated memory
         free(response);
     }
+
 
     return 0;
 }
@@ -684,10 +776,11 @@ int main(int argc, char *argv[]) {
 #if FUSE_USE_VERSION < 30
 	fuse_argv[2] = "-ononempty,suid,dev,allow_other,default_permissions";
 #else
-	fuse_argv[2] = "-osuid,dev,allow_other,default_permissions";
+	fuse_argv[2] = "-osuid,dev,allow_other,default_permissions";  // Отладка и разрешение доступа для других пользователей
+
 #endif
 	fuse_argv[3] = NULL;
-
+	
 	/* 
 	TODO:
 	1. ESTABLISH CONNECTION WITH SERVER 
@@ -701,10 +794,7 @@ int main(int argc, char *argv[]) {
 		CREATE THEM !!!!
 	*/
 	//log("Try to connect");
-	//1. ESTABLISH CONNECTION WITH SERVER 
-	connection = connectToServer("127.0.0.1", 9999);
-	if (connection == -1) 
-		exit(EXIT_FAILURE);
+
 
 	//3. CREATE DIFF FILE
 	// пу пу пууууу
