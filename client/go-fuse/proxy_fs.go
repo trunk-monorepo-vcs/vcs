@@ -174,6 +174,28 @@ func (f *File) Open(ctx *fuse.Context, flags uint32) (fh fs.FileHandle, fuseFlag
 	}
 }
 
+func (fh *FileHandle) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
+	fh.file.mu.Lock()
+	defer fh.file.mu.Unlock()
+
+	
+	newSize := int(off) + len(data)
+	if newSize > len(fh.file.Content) {
+		newContent := make([]byte, newSize)
+		copy(newContent, fh.file.Content)
+		fh.file.Content = newContent
+	}
+
+	copy(fh.file.Content[off:], data)
+
+	// store data on SQLite
+	_, err := fh.file.db.Exec("UPDATE files SET data = ? WHERE name = ?", fh.file.Content, fh.file.Path(nil))
+	if err != nil {
+		return 0, syscall.EIO
+	}
+	return uint32(len(data)), 0
+}
+
 func (r *proxyFs) Opendir(ctx context.Context) syscall.Errno {
 	r.logToFile("Opendir called")
 	return 0
