@@ -86,13 +86,22 @@ func (r *proxyFs) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrO
 }
 
 func (r *proxyFs) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
-	_, err := r.db.Exec("INSERT INTO files (name, data, mode) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET data = ?, mode = ?",
-		name, []byte{}, mode, []byte{}, mode)
+	var result sql.NullString
+	err := r.db.QueryRow("SELECT * FROM files WHERE name = ?", name).Scan(&result)
 	if err != nil {
-		r.logToFile(name + " failed create: " + err.Error())
-		return nil, nil, 0, syscall.EIO
+	  	r.logToFile(name + " failed query sql: " + err.Error())
+	  	return nil, nil, 0, syscall.EIO
 	}
-
+  
+	if !result.Valid {
+	  	_, err = r.db.Exec("INSERT INTO files (name, data, mode) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET data = ?, mode = ?",
+		name, []byte{}, mode, []byte{}, mode)
+		if err != nil {
+			r.logToFile(name + " failed create: " + err.Error())
+			return nil, nil, 0, syscall.EIO
+		}
+	}
+  
 	stable := fs.StableAttr{Ino: uint64(len(r.Children()) + 2), Mode: fuse.S_IFREG}
 	Inode := r.NewPersistentInode(ctx, &SQLiteFile{db: r.db, name: name}, stable)
 	r.AddChild(name, Inode, false)
