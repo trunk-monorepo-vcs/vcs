@@ -12,10 +12,11 @@ import (
 	"database/sql"
 	"flag"
 	"log"
-	
 	"syscall"
-
-	_ "github.com/mattn/go-sqlite3"
+	"os"
+	"sync"
+	
+	"github.com/mattn/go-sqlite3"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
@@ -26,6 +27,24 @@ type proxyFs struct {
 	dbPath string
 }
 
+type SQLStoredFile struct {
+	name String
+	data []byte
+	mode int
+}
+
+type File struct {
+	fs.Inode
+	Content []byte
+	mu      sync.Mutex 
+	db   *sql.DB
+}
+
+
+type FileHandle struct {
+	file *File
+}
+
 type SQLiteFile struct {
 	fs.Inode
 	db   *sql.DB
@@ -34,6 +53,20 @@ type SQLiteFile struct {
 
 func (r *proxyFs) logToFile(message string) {
 	ch := r.GetChild("log.txt")
+	if ch == nil {
+		return
+	}
+
+	file, ok := ch.Operations().(*fs.MemRegularFile)
+	if !ok {
+		return
+	}
+
+	file.Data = append(file.Data, []byte(message+"\n")...)
+}
+
+func (f *File) logToFile(message string) {
+	ch := f.GetChild("log.txt")
 	if ch == nil {
 		return
 	}
@@ -87,7 +120,7 @@ func (r *proxyFs) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrO
 
 func (r *proxyFs) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
 	var result sql.NullString
-	err := r.db.QueryRow("SELECT * FROM files WHERE name = ?", name).Scan(&result)
+	err := r.db.QueryRow("SELECT * FROM files WHERE name = ? LIMIT 1", name).Scan(&result)
 	if err != nil {
 	  	r.logToFile(name + " failed query sql: " + err.Error())
 	  	return nil, nil, 0, syscall.EIO
@@ -107,6 +140,38 @@ func (r *proxyFs) Create(ctx context.Context, name string, flags uint32, mode ui
 	r.AddChild(name, Inode, false)
 	r.logToFile(name + " created")
 	return Inode, nil, 0, 0
+}
+
+func (f *File) Open(ctx *fuse.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	if _, err := os.Stat(f.Path(nil)); err == nil {
+		return &FileHandle{file: f}, 0, 0
+	} else {
+		f.mu.Lock()
+		defer f.mu.Unlock() 
+
+		var result sql.NullString
+		row := f.db.QueryRow("SELECT * FROM files WHERE name = ? LIMIT 1", f.Path(nil))
+		err := row.Scan(&result)
+		if err != nil {
+			  f.logToFile(f.Path(nil) + " failed query sql: " + err.Error())
+			  return nil, 0, syscall.EIO
+		}
+
+		if !result.Valid {
+			return nil, 0, syscall.EIO
+		}
+		
+		//stable := fs.StableAttr{Ino: uint64(len(f.Children()) + 2), Mode: fuse.S_IFREG}
+		//Inode := f.NewPersistentInode(ctx, &SQLiteFile{db: f.db, name: f.Path(nil)}, stable)
+		var content SQLStoredFile
+		err = row.Scan(&content)
+		if err != nil {
+			return nil, 0, syscall.EIO
+		}
+		f.Content = content.data
+
+		return &FileHandle{file: f}, 0, 0
+	}
 }
 
 func (r *proxyFs) Opendir(ctx context.Context) syscall.Errno {
