@@ -50,8 +50,7 @@ func initDB(db *sql.DB) {
 		CREATE TABLE IF NOT EXISTS files(
 			name TEXT PRIMARY KEY,
 			data BLOB,
-			mode INTEGER,
-			parent TEXT DEFAULT '/'
+			mode INTEGER
 		)
 	`)
 	if err != nil {
@@ -90,7 +89,6 @@ func (r *proxyFs) Create(ctx context.Context, name string, flags uint32, mode ui
 		name, []byte{}, mode, []byte{}, mode)
 	if err != nil {
 		r.logToFile(name + " failed create: " + err.Error())
-		println(name);
 		return nil, nil, 0, syscall.EIO
 	}
 	
@@ -100,37 +98,30 @@ func (r *proxyFs) Create(ctx context.Context, name string, flags uint32, mode ui
 	r.logToFile(name + " created")
 	return Inode, nil, 0, 0
 }
-func (r *proxyFs) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-    rows, err := r.db.Query("SELECT name, mode FROM files WHERE parent = ?", "/mydir/")
-    if err != nil {
-        log.Println("Error reading directory:", err)
-        return nil, syscall.EIO
-    }
-    defer rows.Close()
+func (r *SQLiteFile) Readdir(ctx context.Context)(fs.DirStream, syscall.Errno){
+	rows, err := r.db.Query("SELECT name FROM files")
+	if (err != nil){
+		log.Println("Error reading directory", err)
+		return nil, syscall.EIO
+	}
+	defer rows.Close()
+	var entries []fuse.DirEntry
+	for rows.Next(){
+		var name string 
+		rows.Scan(&name)
+		entries = append(entries, fuse.DirEntry{
+			Name: name,
+			Ino: uint64(len(entries) + 2),
+			Mode: fuse.S_IFREG,
+		})
 
-    var entries []fuse.DirEntry
-    for rows.Next() {
-        var name string
-        var mode int
-        if err := rows.Scan(&name, &mode); err != nil {
-            log.Println("Error scanning row:", err)
-            continue
-        }
-        entry := fuse.DirEntry{
-            Name: name,
-            Ino:  uint64(len(entries) + 2),
-            Mode: uint32(mode),
-        }
-        entries = append(entries, entry)
-    }
+	}
+	return fs.NewListDirStream(entries), 0
 
-    return fs.NewListDirStream(entries), 0
 }
 
-
-
 func (r *SQLiteFile) Opendir(ctx context.Context) syscall.Errno {
-	rows, err := r.db.Query("SELECT name FROM files WHERE parent = ?", r.name)
+	rows, err := r.db.Query("SELECT name FROM files")
 	if err != nil {
 		log.Println("Error reading directory:", err)
 		return syscall.EIO
@@ -156,8 +147,7 @@ func (r *SQLiteFile) Opendir(ctx context.Context) syscall.Errno {
 	return 0
 }
 func (r *proxyFs) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	parentPath := "/" + name
-	_, err := r.db.Exec("INSERT INTO files (name, data, mode, parent) VALUES (?, ?, ?, ?)", name, []byte{}, mode, parentPath)
+	_, err := r.db.Exec("INSERT INTO files (name, data, mode) VALUES (?, ?, ?)", name, []byte{}, mode)
 	if err != nil {
 		r.logToFile("Mkdir failed: " + err.Error())
 		return nil, syscall.EIO
@@ -165,7 +155,7 @@ func (r *proxyFs) Mkdir(ctx context.Context, name string, mode uint32, out *fuse
 
 	// new inode
 	stable := fs.StableAttr{Ino: uint64(len(r.Children()) + 2), Mode: fuse.S_IFDIR}
-	Inode := r.NewPersistentInode(ctx, &proxyFs{db: r.db, dbPath: name}, stable)
+	Inode := r.NewPersistentInode(ctx, &proxyFs{db: r.db, dbPath: r.dbPath}, stable)
 	r.AddChild(name, Inode, false)
 
 	r.logToFile("Directory " + name + " created")
@@ -176,7 +166,7 @@ func (r *proxyFs) Mkdir(ctx context.Context, name string, mode uint32, out *fuse
 var _ = (fs.NodeGetattrer)((*proxyFs)(nil))
 var _ = (fs.NodeCreater)((*proxyFs)(nil))
 var _ = (fs.NodeOpendirer)((*SQLiteFile)(nil))
-var _ = (fs.NodeReaddirer)((*proxyFs)(nil))
+var _ = (fs.NodeReaddirer)((*SQLiteFile)(nil))
 var _ = (fs.NodeMkdirer)((*proxyFs)(nil))
 
 func main() {
